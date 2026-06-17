@@ -1,0 +1,47 @@
+{
+  "name": "xiongmao-vpn-linux",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Linux desktop client based on the macOS Xiongmao VPN Electron bundle.",
+  "main": "main.js",
+  "productName": "熊猫上网 Linux",
+  "scripts": {
+    "cli": "node cli.js",
+    "serve": "node cli.js serve",
+    "doctor": "node cli.js doctor",
+    "verify": "node scripts/verify.js",
+    "verify:full": "node scripts/verify.js --require-subscription",
+    "verify:real": "node scripts/verify.js --require-subscription --real-url subscription.url",
+    "start": "electron .",
+    "check": "node --check cli.js && node --check main.js && node --check preload.js && node --check scripts/verify.js",
+    "pack": "electron-builder --linux AppImage deb"
+  },
+  "devDependencies": {
+    "electron": "12.2.3",
+    "electron-builder": "^22.14.13"
+  },
+  "build": {
+    "appId": "com.xiongmao.vpn.linux",
+    "productName": "熊猫上网 Linux",
+    "files": [
+      "main.js",
+      "cli.js",
+      "preload.js",
+      "package.json",
+      "renderer/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources"
+      }
+    ],
+    "linux": {
+      "category": "Network",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    }
+  }
+}

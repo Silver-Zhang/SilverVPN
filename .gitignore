@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.log
+xiongmao_linux_client*.tgz
+.DS_Store
