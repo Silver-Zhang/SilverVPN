@@ -95,7 +95,9 @@ git pull --ff-only
 
 开启“系统代理”后，GNOME 会把浏览器等桌面应用的 HTTP/HTTPS/SOCKS 流量指向这些本地端口。未启用系统代理时，浏览器通常仍然直连。
 
-`ping`、未配置代理的普通 `ssh`、不读取系统代理的命令行程序，不会自动走代理。
+当前版本的“系统与终端代理”开关还会自动管理 Bash/Zsh 的代理环境。新终端会立即继承；已经打开的终端会在下一次出现命令提示符时同步。已经运行的 Copilot、Claude Code 或 IDE 进程必须结束后重新启动，因为 Linux 不能从外部修改现有进程的环境。
+
+`ping`、普通 `ssh` 以及不支持 HTTP/SOCKS 代理的程序仍不会自动走代理。它们需要 TUN 路由模式；检测到 ExpressVPN 等其他 VPN 时，SilverVPN 不会启用 TUN。
 
 命令行临时走代理：
 

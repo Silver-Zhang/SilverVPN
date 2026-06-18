@@ -59,7 +59,7 @@ The GUI supports two profile sources:
 
 Each import is kept as a separate profile. Select the profile in the `Profiles` panel, then choose a node from that profile's node list.
 
-The application opens disconnected. Starting the GUI does not start the core or enable GNOME system proxy. Use `Start` and enable `System proxy` explicitly.
+The application opens disconnected. Starting the GUI does not start the core or enable proxying. Enabling `System and terminal proxy` starts the core, configures GNOME, and automatically synchronizes HTTP/SOCKS proxy variables into Bash and Zsh prompts. Processes that were already running must be restarted.
 
 ## Account Base URL
 
