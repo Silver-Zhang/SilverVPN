@@ -52,6 +52,16 @@ cd ~/SilverVPN
 ./scripts/install.sh
 ```
 
+If installation reports that `node_modules/electron/dist/electron` is missing:
+
+```bash
+cd ~/SilverVPN
+./scripts/install-electron.sh
+./scripts/install.sh
+```
+
+The Electron installer ignores a shell-wide production-only npm setting, forces development dependencies and lifecycle scripts, and retries an incomplete Electron download once.
+
 On GNOME, a copied `.desktop` file may require right-clicking it and choosing **Allow Launching**. The installer also marks it trusted through `gio` when supported.
 
 ## Update

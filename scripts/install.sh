@@ -31,12 +31,14 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Installing npm dependencies"
-npm install
+bash "$ROOT_DIR/scripts/install-electron.sh"
 
 echo "Installing mihomo core"
 "$ROOT_DIR/scripts/install-core.sh"
-chmod 0755 "$ROOT_DIR/scripts/core-watchdog.sh" "$ROOT_DIR/scripts/install-tun.sh"
+chmod 0755 \
+  "$ROOT_DIR/scripts/core-watchdog.sh" \
+  "$ROOT_DIR/scripts/install-electron.sh" \
+  "$ROOT_DIR/scripts/install-tun.sh"
 
 mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
 mkdir -p "$(dirname "$SHELL_HOOK_FILE")"

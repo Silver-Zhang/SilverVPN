@@ -318,8 +318,8 @@ function requestJson(port, pathname) {
   });
 }
 
-function startServe(dataDir, port) {
-  const args = ['serve', '--demo', '--port', String(port), '--data-dir', dataDir];
+function startServe(dataDir, port, corePort) {
+  const args = ['serve', '--demo', '--port', String(port), '--core-port', String(corePort), '--data-dir', dataDir];
   const child = spawn(process.execPath, ['cli.js', ...args], {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe']
@@ -464,7 +464,11 @@ async function verifyModeCommand(dataDir) {
 
 async function verifyDemoServe(dataDir, expected) {
   const port = await getOpenPort();
-  const proc = startServe(dataDir, port);
+  let corePort = await getOpenPort();
+  while (corePort === port) {
+    corePort = await getOpenPort();
+  }
+  const proc = startServe(dataDir, port, corePort);
   try {
     const health = await waitForServer(port, proc);
     const configs = await requestJson(port, '/configs');
@@ -495,7 +499,10 @@ function startSubscriptionServer(configText, options = {}) {
   const pathname = options.pathname || '/subscription.yaml';
   const hits = [];
   const server = http.createServer((request, response) => {
-    hits.push(request.url);
+    hits.push({
+      url: request.url,
+      userAgent: request.headers['user-agent'] || ''
+    });
     response.writeHead(200, { 'Content-Type': contentType });
     response.end(body);
   });
@@ -700,6 +707,10 @@ async function verifySubscriptionImport(fixtureDir) {
     }
 
     assertOk(subscription.hits.length > 0, 'subscription import succeeded without requesting the local subscription server');
+    assertOk(
+      subscription.hits.some(hit => /ClashMeta/i.test(hit.userAgent)),
+      'subscription request did not identify SilverVPN as a ClashMeta-compatible client'
+    );
     const statusResult = await runCli(['status', '--data-dir', dataDir], { heading: 'status after subscription import failed' });
     const status = parseJsonResult(statusResult, 'status after subscription import');
     assertOk(status.configExists === true, 'subscription import did not create an active config');

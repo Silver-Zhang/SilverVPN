@@ -14,7 +14,7 @@ const DEFAULT_HTTP_PORT = 4780;
 const DEFAULT_SOCKS_PORT = 4781;
 const IMPORT_MAX_BYTES = 20 * 1024 * 1024;
 const CORE_START_TIMEOUT_MS = 20000;
-const DEFAULT_USER_AGENT = 'silvervpn-cli/0.1';
+const DEFAULT_USER_AGENT = 'ClashMeta/1.19.27 SilverVPN/0.1';
 const SHADOWROCKET_USER_AGENT = 'Shadowrocket/1995 CFNetwork/1408.0.4 Darwin/22.5.0';
 const ROCKET_RESPONSE_KEY = 'RocketMaker';
 const DEFAULT_ROCKET_DISCOVERY_URL = 'http://127.0.0.1:4788/rocket';
@@ -102,7 +102,7 @@ function copyDirectory(source, target, overwrite = false) {
     const to = path.join(target, entry.name);
     if (entry.isDirectory()) {
       copyDirectory(from, to, overwrite);
-    } else if (overwrite || !fs.existsSync(to)) {
+    } else if (entry.isFile() && (overwrite || !fs.existsSync(to))) {
       fs.copyFileSync(from, to);
     }
   }
@@ -225,7 +225,10 @@ function migrateLegacyData(paths) {
 
   for (const source of candidates) {
     if (fs.existsSync(path.join(source, 'clash-configs', 'config.yaml'))) {
-      copyDirectory(source, paths.dataDir, true);
+      for (const entry of ['clash-configs', 'clashy-configs', 'subscriptions']) {
+        copyDirectory(path.join(source, entry), path.join(paths.dataDir, entry), true);
+      }
+      copyIfMissing(path.join(source, 'settings.json'), paths.settingsFile);
       return;
     }
   }
