@@ -1,13 +1,99 @@
 (function () {
   'use strict';
 
-  const panda = window.panda || { invoke: mockInvoke };
+  const panda = window.panda || {
+    invoke: mockInvoke,
+    copyText(value) {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(String(value || '')).catch(() => {});
+      }
+    }
+  };
   const state = {
     dashboard: null,
     delays: new Map(),
     filter: '',
+    language: 'zh-CN',
     toastTimer: null
   };
+
+  const messages = {
+    'zh-CN': {
+      smart: '智能代理',
+      global: '全局代理',
+      direct: '直连模式',
+      coreRunning: '核心运行中',
+      coreStopped: '核心未运行',
+      noNode: '未选择',
+      noRows: '没有可显示的节点',
+      selected: '已选择',
+      switchNode: '切换',
+      refreshed: '状态已刷新',
+      startOk: '核心已启动',
+      stopOk: '核心已停止',
+      configOpened: '已打开配置目录',
+      logsOpened: '已打开日志目录',
+      systemProxyOn: '系统与终端代理已启用；已有程序需重启',
+      systemProxyOff: '系统与终端代理已关闭',
+      modeSwitched: '已切换到',
+      noDelayNodes: '没有可测试的节点',
+      delayDone: '延迟测试完成',
+      imported: '订阅已导入',
+      fileImported: '文件已导入',
+      loginDone: '账号已登录，节点已更新',
+      refreshedUser: '账号订阅已刷新',
+      bypassSaved: '绕过地址已保存',
+      profileSwitched: '配置方案已切换',
+      networkRefreshed: '网络状态已刷新',
+      proxyCommandCopied: '终端代理命令已复制',
+      detectingIp: 'Detecting outbound IP',
+      testing: 'Testing',
+      accountMissing: '未登录',
+      testingState: '测试中',
+      pass: '通过',
+      fail: '失败'
+    },
+    en: {
+      smart: 'Smart',
+      global: 'Global',
+      direct: 'Direct',
+      coreRunning: 'Core running',
+      coreStopped: 'Core stopped',
+      noNode: 'Not selected',
+      noRows: 'No nodes',
+      selected: 'Selected',
+      switchNode: 'Switch',
+      refreshed: 'Status refreshed',
+      startOk: 'Core started',
+      stopOk: 'Core stopped',
+      configOpened: 'Config opened',
+      logsOpened: 'Logs opened',
+      systemProxyOn: 'System and terminal proxy enabled; restart existing apps',
+      systemProxyOff: 'System and terminal proxy disabled',
+      modeSwitched: 'Switched to ',
+      noDelayNodes: 'No nodes to test',
+      delayDone: 'Delay test complete',
+      imported: 'Subscription imported',
+      fileImported: 'File imported',
+      loginDone: 'Logged in and updated',
+      refreshedUser: 'Account subscription refreshed',
+      bypassSaved: 'Bypass list saved',
+      profileSwitched: 'Profile switched',
+      networkRefreshed: 'Network status refreshed',
+      proxyCommandCopied: 'Terminal proxy command copied',
+      detectingIp: 'Detecting outbound IP',
+      testing: 'Testing',
+      accountMissing: 'Not signed in',
+      testingState: 'Testing',
+      pass: 'Passed',
+      fail: 'Failed'
+    }
+  };
+
+  function t(key) {
+    const language = state.language === 'en' ? 'en' : 'zh-CN';
+    return (messages[language] && messages[language][key]) || messages['zh-CN'][key] || key;
+  }
 
   function $(selector) {
     return document.querySelector(selector);
@@ -31,12 +117,53 @@
   function modeText(mode) {
     const key = modeKey(mode);
     if (key === 'global') {
-      return '全局代理';
+      return t('global');
     }
     if (key === 'direct') {
-      return '直连模式';
+      return t('direct');
     }
-    return '智能代理';
+    return t('smart');
+  }
+
+  function applyLanguage() {
+    const english = state.language === 'en';
+    document.documentElement.lang = english ? 'en' : 'zh-CN';
+    const pairs = [
+      ['#connectionTitle', english ? 'Connection' : '连接'],
+      ['#startCore', english ? 'Start' : '启动'],
+      ['#stopCore', english ? 'Stop' : '停止'],
+      ['.mode-button[data-mode="rule"]', modeText('rule')],
+      ['.mode-button[data-mode="global"]', modeText('global')],
+      ['.mode-button[data-mode="direct"]', modeText('direct')],
+      ['.switch-row span', english ? 'System proxy' : '系统代理'],
+      ['#accountTitle', english ? 'Account' : '账号'],
+      ['#refreshUser', english ? 'Refresh' : '刷新'],
+      ['#subscriptionTitle', english ? 'Profiles' : '订阅'],
+      ['#importFile', english ? 'Import file' : '导入文件'],
+      ['#importForm button[type="submit"]', english ? 'Import subscription' : '导入订阅'],
+      ['label[for="profileSelect"]', english ? 'Profile' : '配置方案'],
+      ['#bypassTitle', english ? 'Direct bypass' : '直连/绕过地址'],
+      ['#saveBypass', english ? 'Save' : '保存'],
+      ['#testsTitle', english ? 'Connectivity' : '连通性测试'],
+      ['#detectIp', english ? 'Outbound IP' : '出口 IP'],
+      ['#pathsTitle', english ? 'Paths' : '路径'],
+      ['#openConfig', english ? 'Open config' : '打开配置'],
+      ['#logTitle', english ? 'Core log' : '核心日志'],
+      ['#openLogs', english ? 'Open logs' : '打开目录'],
+      ['#delayAll', english ? 'Delay test' : '延迟测试'],
+      ['#networkTitle', english ? 'Network status' : '网络状态'],
+      ['#copyProxyEnv', english ? 'Copy terminal / VS Code proxy command' : '复制终端 / VS Code 代理命令']
+    ];
+    pairs.forEach(([selector, value]) => setText(selector, value));
+    $('#apiBase').placeholder = english ? 'Optional API base URL' : '服务端 URL（可选）';
+    $('#username').placeholder = english ? 'Account email' : '账号';
+    $('#password').placeholder = english ? 'Password' : '密码';
+    $('#nodeSearch').placeholder = english ? 'Search nodes' : '搜索节点';
+    $('#subscriptionSource').placeholder = english ? 'Subscription URL / sub://...' : '订阅 URL / sub://...';
+    $('#customTestUrl').placeholder = 'https://example.com';
+    $('#bypassHosts').placeholder = english
+      ? 'One host or CIDR per line, for example:\ngitlab.example.org\n*.example.org\n192.168.0.0/16'
+      : '每行一个域名或网段，例如：\ngitlab.example.org\n*.example.org\n192.168.0.0/16';
   }
 
   function shortPath(value) {
@@ -115,7 +242,7 @@
     const dashboard = state.dashboard || {};
     const rows = getRows();
     if (!rows.length) {
-      list.innerHTML = '<div class="node-empty">没有可显示的节点</div>';
+      list.innerHTML = `<div class="node-empty">${t('noRows')}</div>`;
       return;
     }
     list.innerHTML = rows
@@ -129,7 +256,7 @@
             <div class="node-name" title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</div>
             <div class="node-type">${escapeHtml(row.type || '-')}</div>
             <div class="node-delay ${delayClass}">${delayText}</div>
-            <button class="button button-small switch-node" type="button" data-node="${escapeHtml(row.name)}">${selected ? '已选择' : '切换'}</button>
+            <button class="button button-small switch-node" type="button" data-node="${escapeHtml(row.name)}">${selected ? t('selected') : t('switchNode')}</button>
           </div>
         `;
       })
@@ -152,12 +279,15 @@
     const settings = dashboard.settings || {};
     const proxies = dashboard.proxies || {};
     const account = dashboard.account || {};
-    const profile = account.profile || {};
+    const profile = dashboard.activeProfile || account.profile || {};
     const auth = account.auth || {};
     const mode = modeKey(config.mode);
+    state.language = settings.language || 'zh-CN';
+    $('#languageSelect').value = state.language;
+    applyLanguage();
 
-    setText('#coreState', core.running ? '核心运行中' : '核心未运行');
-    setText('#currentProxy', proxies.current || '未选择');
+    setText('#coreState', core.running ? t('coreRunning') : t('coreStopped'));
+    setText('#currentProxy', proxies.current || t('noNode'));
     setText('#httpPort', config.httpPort || '-');
     setText('#socksPort', config.socksPort || '-');
     setText('#proxyCount', proxies.count || 0);
@@ -168,8 +298,8 @@
     setText('#configFile', shortPath(config.activeConfigFile));
     setText('#controlApi', core.control || '-');
     setText('#coreLog', core.logTail ? core.logTail.trim() : '暂无日志');
-    setBadge('#modeBadge', config.modeLabel || modeText(mode), core.running ? undefined : 'warn');
-    setBadge('#accountState', auth && auth.username ? auth.username : '未登录', auth && auth.username ? undefined : 'muted');
+    setBadge('#modeBadge', modeText(mode), core.running ? undefined : 'warn');
+    setBadge('#accountState', auth && auth.username ? auth.username : t('accountMissing'), auth && auth.username ? undefined : 'muted');
 
     $('#systemProxy').checked = Boolean(settings.systemProxy);
     $$('.mode-button').forEach(button => {
@@ -181,7 +311,89 @@
       usernameInput.value = auth.username;
     }
 
+    renderProfiles(dashboard);
+    renderBypass(settings);
     renderNodes();
+  }
+
+  function renderProfiles(dashboard) {
+    const select = $('#profileSelect');
+    const profiles = dashboard.subscriptions || [];
+    const currentId = dashboard.activeProfile && dashboard.activeProfile.id ? dashboard.activeProfile.id : dashboard.settings.currentProfileId || '';
+    select.innerHTML = [
+      `<option value="">${state.language === 'en' ? 'Current config' : '当前配置'}</option>`,
+      ...profiles.map(profile => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name || profile.kind || profile.id)}</option>`)
+    ].join('');
+    select.value = currentId;
+  }
+
+  function renderBypass(settings) {
+    const custom = settings.bypassHosts || [];
+    const textarea = $('#bypassHosts');
+    if (document.activeElement !== textarea) {
+      textarea.value = custom.join('\n');
+    }
+    setText('#defaultBypassHosts', (settings.defaultBypassHosts || []).join(', '));
+  }
+
+  function formatEgress(value) {
+    if (!value || !value.ok) {
+      return value && value.inactive ? (state.language === 'en' ? 'Core stopped' : '核心未启动') : '-';
+    }
+    return [value.ip, value.country, value.city].filter(Boolean).join(' · ');
+  }
+
+  function renderNetworkStatus(status) {
+    const silver = status.silverVPN || {};
+    const gnome = status.gnomeProxy || {};
+    const route = status.routes || {};
+    const tunnels = status.tunnelInterfaces || [];
+    const ports = status.listeningPorts || [];
+    const warnings = status.conflicts || [];
+    const checkedAt = status.checkedAt ? new Date(status.checkedAt).toLocaleTimeString() : '-';
+
+    setText('#networkCheckedAt', `${state.language === 'en' ? 'Updated' : '更新'} ${checkedAt}`);
+    setBadge(
+      '#silverState',
+      silver.coreRunning ? `${modeText(silver.mode)} · ${silver.node || t('noNode')}` : (state.language === 'en' ? 'Disconnected' : '未连接'),
+      silver.coreRunning ? undefined : 'muted'
+    );
+    setText('#directEgress', formatEgress(status.directEgress));
+    setText('#silverEgress', formatEgress(status.silverEgress));
+    setText(
+      '#systemProxyActual',
+      gnome.mode === 'manual'
+        ? `${gnome.http || gnome.https || 'manual'}${gnome.ownedBySilverVPN ? ' · SilverVPN' : ''}`
+        : gnome.mode || '-'
+    );
+    setText('#defaultRoute', route.ipv4 || route.ipv6 || '-');
+    setText('#tunnelInterfaces', tunnels.length ? tunnels.map(item => item.name).join(', ') : (state.language === 'en' ? 'None' : '无'));
+    setText(
+      '#listeningPorts',
+      ports.filter(item => item.listening).map(item => item.port).join(', ') || (state.language === 'en' ? 'None' : '无')
+    );
+
+    const warningNode = $('#networkWarnings');
+    warningNode.hidden = warnings.length === 0;
+    warningNode.innerHTML = warnings.map(item => `<div>${escapeHtml(item)}</div>`).join('');
+  }
+
+  async function loadNetworkStatus(showToast) {
+    try {
+      const status = await panda.invoke('network-status');
+      renderNetworkStatus(status);
+      if (showToast) {
+        toast(t('networkRefreshed'));
+      }
+    } catch (error) {
+      setText('#networkCheckedAt', error.message || String(error));
+    }
+  }
+
+  function terminalProxyCommand() {
+    const proxy = 'http://127.0.0.1:4780';
+    const noProxy = 'localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.reallab.org.cn';
+    return `export HTTP_PROXY=${proxy} HTTPS_PROXY=${proxy} http_proxy=${proxy} https_proxy=${proxy} NO_PROXY=${noProxy} no_proxy=${noProxy}`;
   }
 
   async function loadDashboard(quiet) {
@@ -189,7 +401,7 @@
       const dashboard = await panda.invoke('dashboard');
       renderDashboard(dashboard);
       if (!quiet) {
-        toast('状态已刷新');
+        toast(t('refreshed'));
       }
     } catch (error) {
       toast(error.message || String(error));
@@ -220,11 +432,11 @@
   }
 
   async function runUrlTest(url) {
-    setBadge('#testState', '测试中', 'warn');
-    setText('#testOutput', `Testing ${url}`);
+    setBadge('#testState', t('testingState'), 'warn');
+    setText('#testOutput', `${t('testing')} ${url}`);
     try {
       const result = await panda.invoke('test-url', { url });
-      setBadge('#testState', result.ok ? '通过' : '失败', result.ok ? undefined : 'danger');
+      setBadge('#testState', result.ok ? t('pass') : t('fail'), result.ok ? undefined : 'danger');
       setText(
         '#testOutput',
         [
@@ -240,17 +452,41 @@
           .join('\n')
       );
     } catch (error) {
-      setBadge('#testState', '失败', 'danger');
+      setBadge('#testState', t('fail'), 'danger');
+      setText('#testOutput', error.message || String(error));
+    }
+  }
+
+  async function runIpTest() {
+    setBadge('#testState', t('testingState'), 'warn');
+    setText('#testOutput', t('detectingIp'));
+    try {
+      const result = await panda.invoke('detect-ip');
+      setBadge('#testState', result.ok ? t('pass') : t('fail'), result.ok ? undefined : 'danger');
+      setText(
+        '#testOutput',
+        [
+          `ip=${result.ip || '-'}`,
+          `country=${result.country || '-'}`,
+          `region=${result.region || '-'}`,
+          `city=${result.city || '-'}`,
+          `org=${result.org || '-'}`,
+          `source=${result.source || '-'}`,
+          `proxy=${result.proxy || '-'}`
+        ].join('\n')
+      );
+    } catch (error) {
+      setBadge('#testState', t('fail'), 'danger');
       setText('#testOutput', error.message || String(error));
     }
   }
 
   async function runLanTest() {
-    setBadge('#testState', '测试中', 'warn');
-    setText('#testOutput', 'Testing 192.168.9.27:22');
+    setBadge('#testState', t('testingState'), 'warn');
+    setText('#testOutput', `${t('testing')} 192.168.9.27:22`);
     try {
       const result = await panda.invoke('test-tcp', { host: '192.168.9.27', port: 22 });
-      setBadge('#testState', result.ok ? '通过' : '失败', result.ok ? undefined : 'danger');
+      setBadge('#testState', result.ok ? t('pass') : t('fail'), result.ok ? undefined : 'danger');
       setText(
         '#testOutput',
         [
@@ -264,25 +500,35 @@
           .join('\n')
       );
     } catch (error) {
-      setBadge('#testState', '失败', 'danger');
+      setBadge('#testState', t('fail'), 'danger');
       setText('#testOutput', error.message || String(error));
     }
   }
 
   function bindEvents() {
     $('#refreshDashboard').addEventListener('click', () => loadDashboard(false));
-    $('#startCore').addEventListener('click', () => callAction('start-core', {}, '核心已启动'));
-    $('#stopCore').addEventListener('click', () => callAction('stop-core', {}, '核心已停止'));
-    $('#openConfig').addEventListener('click', () => callAction('open-config-dir', {}, '已打开配置目录'));
-    $('#openLogs').addEventListener('click', () => callAction('open-logs-dir', {}, '已打开日志目录'));
+    $('#refreshNetwork').addEventListener('click', () => loadNetworkStatus(true));
+    $('#copyProxyEnv').addEventListener('click', () => {
+      panda.copyText(terminalProxyCommand());
+      toast(t('proxyCommandCopied'));
+    });
+    $('#startCore').addEventListener('click', () => callAction('start-core', {}, t('startOk')));
+    $('#stopCore').addEventListener('click', () => callAction('stop-core', {}, t('stopOk')));
+    $('#openConfig').addEventListener('click', () => callAction('open-config-dir', {}, t('configOpened')));
+    $('#openLogs').addEventListener('click', () => callAction('open-logs-dir', {}, t('logsOpened')));
+    $('#languageSelect').addEventListener('change', event => {
+      callAction('set-language', { language: event.target.value }, null).then(() => {
+        applyLanguage();
+      });
+    });
     $('#systemProxy').addEventListener('change', event => {
-      callAction('set-system-proxy', { enabled: event.target.checked }, event.target.checked ? '系统代理已启用' : '系统代理已关闭').catch(() => {
+      callAction('set-system-proxy', { enabled: event.target.checked }, event.target.checked ? t('systemProxyOn') : t('systemProxyOff')).catch(() => {
         event.target.checked = !event.target.checked;
       });
     });
 
     $$('.mode-button').forEach(button => {
-      button.addEventListener('click', () => callAction('set-mode', { mode: button.dataset.mode }, `已切换到${modeText(button.dataset.mode)}`));
+      button.addEventListener('click', () => callAction('set-mode', { mode: button.dataset.mode }, `${t('modeSwitched')}${modeText(button.dataset.mode)}`));
     });
 
     $('#nodeSearch').addEventListener('input', event => {
@@ -310,7 +556,7 @@
         .slice(0, 60)
         .map(row => row.name);
       if (!names.length) {
-        toast('没有可测试的节点');
+        toast(t('noDelayNodes'));
         return;
       }
       setLoading(true);
@@ -318,7 +564,7 @@
         const results = await panda.invoke('check-delays', { names });
         results.forEach(item => state.delays.set(item.name, item.delay));
         renderNodes();
-        toast('延迟测试完成');
+        toast(t('delayDone'));
       } catch (error) {
         toast(error.message || String(error));
       } finally {
@@ -329,12 +575,20 @@
     $('#importForm').addEventListener('submit', event => {
       event.preventDefault();
       const source = $('#subscriptionSource').value.trim();
-      callAction('import-source', { source }, '订阅已导入').then(() => {
+      callAction('import-source', { source }, t('imported')).then(() => {
         $('#subscriptionSource').value = '';
       });
     });
 
-    $('#importFile').addEventListener('click', () => callAction('import-file', {}, '文件已导入'));
+    $('#importFile').addEventListener('click', () => callAction('import-file', {}, t('fileImported')));
+    $('#profileSelect').addEventListener('change', event => {
+      if (event.target.value) {
+        callAction('switch-profile', { id: event.target.value }, t('profileSwitched'));
+      }
+    });
+    $('#saveBypass').addEventListener('click', () => {
+      callAction('set-bypass-hosts', { text: $('#bypassHosts').value }, t('bypassSaved'));
+    });
 
     $('#loginForm').addEventListener('submit', event => {
       event.preventDefault();
@@ -345,19 +599,20 @@
           username: $('#username').value.trim(),
           password: $('#password').value
         },
-        '账号已登录，节点已更新'
+        t('loginDone')
       ).then(() => {
         $('#password').value = '';
       });
     });
 
     $('#refreshUser').addEventListener('click', () => {
-      callAction('refresh-user', { base: $('#apiBase').value.trim() }, '账号订阅已刷新');
+      callAction('refresh-user', { base: $('#apiBase').value.trim() }, t('refreshedUser'));
     });
 
     $$('[data-test-url]').forEach(button => {
       button.addEventListener('click', () => runUrlTest(button.dataset.testUrl));
     });
+    $('#detectIp').addEventListener('click', runIpTest);
     $('#testLan').addEventListener('click', runLanTest);
     $('#customTestForm').addEventListener('submit', event => {
       event.preventDefault();
@@ -367,7 +622,7 @@
 
   function mockDashboard() {
     return {
-      appName: '熊猫上网 Linux',
+      appName: 'SilverVPN',
       core: {
         running: true,
         binary: '/usr/local/bin/mihomo',
@@ -375,8 +630,8 @@
         logTail: '[info] dashboard preview mode\n[info] proxy selector ready'
       },
       config: {
-        dataDir: '/home/silver/.config/xiongmao-vpn-linux',
-        activeConfigFile: '/home/silver/.config/xiongmao-vpn-linux/clash-configs/config.yaml',
+        dataDir: '/home/silver/.config/SilverVPN',
+        activeConfigFile: '/home/silver/.config/SilverVPN/clash-configs/config.yaml',
         httpPort: 4780,
         socksPort: 4781,
         mode: 'Rule',
@@ -384,6 +639,10 @@
       },
       settings: {
         systemProxy: false,
+        language: state.language,
+        defaultBypassHosts: ['localhost', '127.0.0.0/8', '192.168.0.0/16'],
+        bypassHosts: ['gitlab.example.org'],
+        currentProfileId: 'account-preview',
         currentSelector: 'Proxy',
         currentProxy: '香港 01'
       },
@@ -391,7 +650,11 @@
         auth: { username: 'preview@example.com', hasCookie: true },
         profile: { name: 'account subscription', proxyCount: 31, importedAt: new Date().toISOString() }
       },
-      subscriptions: [],
+      activeProfile: { id: 'account-preview', name: 'SilverVPN Account (preview@example.com)', proxyCount: 5, importedAt: new Date().toISOString() },
+      subscriptions: [
+        { id: 'account-preview', name: 'SilverVPN Account (preview@example.com)', kind: 'account', proxyCount: 5 },
+        { id: 'custom-preview', name: 'Custom Subscription', kind: 'custom', proxyCount: 2 }
+      ],
       proxies: {
         selector: 'Proxy',
         current: '香港 01',
@@ -416,6 +679,19 @@
       state.dashboard.config.modeLabel = modeText(payload.mode);
       return state.dashboard;
     }
+    if (action === 'set-language') {
+      state.dashboard.settings.language = payload.language;
+      return state.dashboard;
+    }
+    if (action === 'set-bypass-hosts') {
+      state.dashboard.settings.bypassHosts = String(payload.text || '').split(/\r?\n/).filter(Boolean);
+      return state.dashboard;
+    }
+    if (action === 'switch-profile') {
+      state.dashboard.activeProfile = state.dashboard.subscriptions.find(item => item.id === payload.id) || state.dashboard.activeProfile;
+      state.dashboard.settings.currentProfileId = payload.id;
+      return state.dashboard;
+    }
     if (action === 'switch-proxy') {
       state.dashboard.proxies.current = payload.proxy;
       state.dashboard.settings.currentProxy = payload.proxy;
@@ -437,6 +713,46 @@
         proxy: 'http://127.0.0.1:4780'
       };
     }
+    if (action === 'detect-ip') {
+      return {
+        ok: true,
+        ip: '203.0.113.8',
+        country: 'JP',
+        region: 'Tokyo',
+        city: 'Tokyo',
+        org: 'Example Transit',
+        source: 'ipinfo.io',
+        proxy: 'http://127.0.0.1:4780'
+      };
+    }
+    if (action === 'network-status') {
+      return {
+        checkedAt: new Date().toISOString(),
+        silverVPN: {
+          coreRunning: true,
+          mode: state.dashboard.config.mode,
+          selector: state.dashboard.proxies.selector,
+          node: state.dashboard.proxies.current,
+          httpProxy: '127.0.0.1:4780',
+          socksProxy: '127.0.0.1:4781'
+        },
+        gnomeProxy: {
+          mode: 'manual',
+          http: '127.0.0.1:4780',
+          ownedBySilverVPN: true
+        },
+        directEgress: { ok: true, ip: '198.51.100.21', country: 'CN', city: 'Beijing' },
+        silverEgress: { ok: true, ip: '203.0.113.8', country: 'JP', city: 'Tokyo' },
+        routes: { ipv4: 'default via 192.168.9.1 dev enp3s0' },
+        tunnelInterfaces: [{ name: 'tun0', addresses: ['10.8.0.2'], tunnel: true }],
+        listeningPorts: [
+          { port: 4780, listening: true },
+          { port: 4781, listening: true },
+          { port: 4788, listening: true }
+        ],
+        conflicts: ['检测到隧道网卡：tun0']
+      };
+    }
     if (action === 'test-tcp') {
       return { ok: true, host: payload.host, port: payload.port, elapsedMs: 18 };
     }
@@ -446,6 +762,8 @@
   document.addEventListener('DOMContentLoaded', () => {
     bindEvents();
     loadDashboard(true);
+    loadNetworkStatus(false);
     setInterval(() => loadDashboard(true), 10000);
+    setInterval(() => loadNetworkStatus(false), 15000);
   });
 })();

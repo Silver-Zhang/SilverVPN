@@ -16,14 +16,18 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const crypto = require('crypto');
 const { URL } = require('url');
 
-const APP_NAME = '熊猫上网 Linux';
+const APP_NAME = 'SilverVPN';
+const LEGACY_APP_NAMES = ['熊猫上网 Linux', 'xiongmao-vpn-linux'];
 const CONTROL_HOST = '127.0.0.1';
 const PUBLIC_CONTROL_PORT = 4788;
 const CORE_CONTROL_PORT = 4790;
 const HTTP_PROXY_PORT = 4780;
 const SOCKS_PROXY_PORT = 4781;
+const DEFAULT_DELAY_TEST_URL = 'https://www.gstatic.com/generate_204';
+const CORE_START_TIMEOUT_MS = 20000;
 const LOCAL_API_KEY = 'RocketMaker';
 const MODE_ALIASES = {
   rule: 'Rule',
@@ -38,6 +42,34 @@ const MODE_LABELS = {
   Global: '全局代理',
   Direct: '直连模式'
 };
+const DEFAULT_BYPASS_HOSTS = [
+  'localhost',
+  '127.0.0.0/8',
+  '::1',
+  '10.0.0.0/8',
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  '169.254.0.0/16',
+  'gitlab.reallab.org.cn',
+  '*.reallab.org.cn',
+  '*.local'
+];
+const ALWAYS_PROXY_RULES = [
+  'DOMAIN-SUFFIX,claude.ai,Proxy',
+  'DOMAIN-SUFFIX,anthropic.com,Proxy',
+  'DOMAIN-SUFFIX,claudeusercontent.com,Proxy',
+  'DOMAIN,platform.claude.com,Proxy',
+  'DOMAIN,downloads.claude.ai,Proxy',
+  'DOMAIN-SUFFIX,openai.com,Proxy',
+  'DOMAIN-SUFFIX,chatgpt.com,Proxy',
+  'DOMAIN-SUFFIX,google.com,Proxy',
+  'DOMAIN-SUFFIX,googleapis.com,Proxy',
+  'DOMAIN-SUFFIX,gstatic.com,Proxy',
+  'DOMAIN,storage.googleapis.com,Proxy',
+  'DOMAIN-SUFFIX,github.com,Proxy',
+  'DOMAIN-SUFFIX,githubusercontent.com,Proxy'
+];
+const ALWAYS_DIRECT_RULES = ['GEOIP,CN,DIRECT'];
 
 let mainWindow = null;
 let tray = null;
@@ -52,6 +84,9 @@ let settings = {
   systemProxy: false,
   startWithSystem: false,
   holdProxy: false,
+  language: 'zh-CN',
+  bypassHosts: [],
+  currentProfileId: '',
   currentProfile: '',
   currentSelector: 'Proxy',
   currentProxy: '',
@@ -74,15 +109,32 @@ function resolveRuntimePaths() {
     logsDir: path.join(userData, 'logs'),
     settingsFile: path.join(userData, 'clashy-configs', 'settings.json'),
     subscriptionsFile: path.join(userData, 'clashy-configs', 'subscriptions.json'),
+    shellProxyFile: path.join(userData, 'shell-proxy.sh'),
     activeConfigFile: path.join(userData, 'clash-configs', 'config.yaml'),
     runtimeConfigFile: path.join(userData, 'clash-runtime', 'config.yaml'),
     loadingImage: path.join(resources, 'clashy-configs', 'loading.jpg'),
-    iconFile: path.join(__dirname, 'renderer', 'static', 'media', 'ava.e147bdeb.png')
+    iconFile: path.join(__dirname, 'renderer', 'static', 'media', 'silvervpn.png')
   };
 }
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
+}
+
+function copyDirectory(source, target, overwrite = false) {
+  if (!fs.existsSync(source)) {
+    return;
+  }
+  ensureDir(target);
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name);
+    const to = path.join(target, entry.name);
+    if (entry.isDirectory()) {
+      copyDirectory(from, to, overwrite);
+    } else if (overwrite || !fs.existsSync(to)) {
+      fs.copyFileSync(from, to);
+    }
+  }
 }
 
 function copyIfMissing(source, target) {
@@ -109,8 +161,82 @@ function writeJson(file, value) {
   fs.writeFileSync(file, JSON.stringify(value, null, 2));
 }
 
+function userDataHasRealConfig(targetUserData) {
+  const file = path.join(targetUserData, 'clash-configs', 'config.yaml');
+  if (!fs.existsSync(file)) {
+    return false;
+  }
+  const text = fs.readFileSync(file, 'utf8');
+  return text.trim() && !text.includes('线路加载失败，请点击左侧刷新按钮');
+}
+
+function migrateLegacyUserData(targetUserData) {
+  if (userDataHasRealConfig(targetUserData)) {
+    return;
+  }
+  const appData = app.getPath('appData');
+  for (const name of LEGACY_APP_NAMES) {
+    const source = path.join(appData, name);
+    if (source !== targetUserData && fs.existsSync(source)) {
+      copyDirectory(source, targetUserData, true);
+      return;
+    }
+  }
+}
+
+function normalizeBypassHosts(values) {
+  const source = Array.isArray(values) ? values : String(values || '').split(/\r?\n/);
+  const cleaned = [];
+  const seen = new Set();
+  for (const item of source) {
+    const value = String(item || '').trim();
+    if (!value || value.startsWith('#')) {
+      continue;
+    }
+    if (!seen.has(value)) {
+      cleaned.push(value);
+      seen.add(value);
+    }
+  }
+  return cleaned;
+}
+
+function getBypassHosts() {
+  return normalizeBypassHosts([...DEFAULT_BYPASS_HOSTS, ...(settings.bypassHosts || [])]);
+}
+
+function bypassHostToDirectRule(host) {
+  if (host === 'localhost') {
+    return 'DOMAIN,localhost,DIRECT';
+  }
+  if (host === '::1') {
+    return 'IP-CIDR6,::1/128,DIRECT,no-resolve';
+  }
+  if (/^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/.test(host)) {
+    return `IP-CIDR,${host},DIRECT,no-resolve`;
+  }
+  if (/^[0-9a-f:]+\/\d{1,3}$/i.test(host)) {
+    return `IP-CIDR6,${host},DIRECT,no-resolve`;
+  }
+  if (host.startsWith('*.')) {
+    return `DOMAIN-SUFFIX,${host.slice(2)},DIRECT`;
+  }
+  if (host.startsWith('.')) {
+    return `DOMAIN-SUFFIX,${host.slice(1)},DIRECT`;
+  }
+  if (/^[a-z0-9.-]+$/i.test(host)) {
+    return `DOMAIN,${host},DIRECT`;
+  }
+  return '';
+}
+
+function getDirectRules() {
+  return normalizeBypassHosts([...getBypassHosts().map(bypassHostToDirectRule), ...ALWAYS_DIRECT_RULES]);
+}
+
 function initializeFilesystem() {
   runtime = resolveRuntimePaths();
+  migrateLegacyUserData(runtime.userData);
   [
     runtime.clashConfigDir,
     runtime.clashRuntimeDir,
@@ -139,6 +265,11 @@ function initializeFilesystem() {
     ...settings,
     ...readJson(runtime.settingsFile, {})
   };
+  if (readProfiles().length === 0 && userDataHasRealConfig(runtime.userData)) {
+    const cliProfile = readCliSettings().profile || {};
+    saveActiveConfigAsProfile(cliProfile.sourceType === 'account-subscription' ? 'account' : 'custom');
+  }
+  synchronizeProfileStateFromCli();
 }
 
 function saveSettings() {
@@ -209,8 +340,8 @@ function readActiveConfigText() {
 function readConfigSummary() {
   const text = readActiveConfigText();
   return {
-    port: Number(parseScalarConfigValue(text, 'port', HTTP_PROXY_PORT)) || HTTP_PROXY_PORT,
-    'socks-port': Number(parseScalarConfigValue(text, 'socks-port', SOCKS_PROXY_PORT)) || SOCKS_PROXY_PORT,
+    port: HTTP_PROXY_PORT,
+    'socks-port': SOCKS_PROXY_PORT,
     mode: normalizeStoredMode(parseScalarConfigValue(text, 'mode', 'Rule'))
   };
 }
@@ -279,19 +410,19 @@ function extractProxyNames(configText) {
     configText.match(/(?:^|\n)(?:Proxy|proxies):\s*\n([\s\S]*?)(?:\n(?:Proxy Group|proxy-groups|Rule|rules):|\n[A-Za-z_-]+:\s*\n|$)/);
   const source = proxySection ? proxySection[1] : configText;
   const names = new Set();
-  const patterns = [
-    /-\s*name:\s*["']?([^"'\n]+)["']?/g,
-    /-\s*\{\s*name:\s*["']([^"']+)["']/g,
-    /-\s*\{\s*name:\s*([^,}]+)/g
-  ];
-
-  for (const pattern of patterns) {
-    let match;
-    while ((match = pattern.exec(source))) {
-      const name = match[1].trim();
-      if (name && !name.includes('type:')) {
-        names.add(name);
+  const pattern = /-\s*(?:\{\s*)?["']?name["']?\s*:\s*(?:"((?:\\.|[^"\\])*)"|'([^']*)'|([^,\n}]+))/g;
+  let match;
+  while ((match = pattern.exec(source))) {
+    let name = (match[1] || match[2] || match[3] || '').trim();
+    if (match[1]) {
+      try {
+        name = JSON.parse(`"${match[1]}"`);
+      } catch (error) {
+        name = match[1];
       }
+    }
+    if (name && !name.includes('type:')) {
+      names.add(name);
     }
   }
 
@@ -342,7 +473,42 @@ function patchConfigForRuntime(sourceText) {
     text = pattern.test(text) ? text.replace(pattern, line) : `${line}\n${text}`;
   }
 
+  text = ensureDirectRules(text);
   return text;
+}
+
+function ensureDirectRules(sourceText) {
+  const lines = sourceText.split(/\r?\n/);
+  const rulesIndex = lines.findIndex(line => /^rules:\s*$/.test(line));
+
+  if (rulesIndex === -1) {
+    const rules = [...ALWAYS_PROXY_RULES, ...getDirectRules(), 'MATCH,Proxy'].map(rule => `  - ${rule}`);
+    return `${sourceText.replace(/\s*$/, '')}\nrules:\n${rules.join('\n')}\n`;
+  }
+
+  let endIndex = rulesIndex + 1;
+  while (endIndex < lines.length && !/^[^\s#][^:]*:\s*/.test(lines[endIndex])) {
+    endIndex += 1;
+  }
+
+  const existingRules = new Set(
+    lines
+      .slice(rulesIndex + 1, endIndex)
+      .map(line => line.trim().replace(/^-\s*/, '').replace(/^["']|["']$/g, ''))
+      .filter(Boolean)
+  );
+  const ruleIndent =
+    lines
+      .slice(rulesIndex + 1, endIndex)
+      .map(line => line.match(/^(\s*)-\s/))
+      .find(Boolean)?.[1] ?? '  ';
+  const missingRules = [...ALWAYS_PROXY_RULES, ...getDirectRules()].filter(rule => !existingRules.has(rule));
+  if (missingRules.length === 0) {
+    return sourceText;
+  }
+
+  lines.splice(rulesIndex + 1, 0, ...missingRules.map(rule => `${ruleIndent}- ${rule}`));
+  return lines.join('\n');
 }
 
 function prepareRuntimeConfig() {
@@ -486,7 +652,12 @@ async function startCore() {
     coreProcess = null;
   });
 
-  return waitForCore(4000);
+  const ready = await waitForCore(CORE_START_TIMEOUT_MS);
+  if (!ready) {
+    return false;
+  }
+  await restoreCoreSelection();
+  return true;
 }
 
 function stopCore() {
@@ -496,9 +667,64 @@ function stopCore() {
   coreProcess = null;
 }
 
+async function restoreCoreSelection() {
+  const proxiesResponse = await requestCore('/proxies');
+  const proxies = proxiesResponse.proxies || {};
+  const mode = normalizeStoredMode((await requestCore('/configs')).mode);
+  const selectorName = mode === 'Global' ? 'GLOBAL' : 'Proxy';
+  const selector = proxies[selectorName] || {};
+  const candidates = Array.isArray(selector.all) ? selector.all : [];
+  let selected = settings.currentProxy;
+
+  if (!selected || !candidates.includes(selected)) {
+    selected = selector.now && candidates.includes(selector.now) ? selector.now : candidates.find(name => {
+      const type = String((proxies[name] || {}).type || '').toLowerCase();
+      return !['selector', 'direct', 'reject', 'pass', 'compatible'].includes(type);
+    }) || '';
+  }
+
+  if (selected && candidates.includes(selected) && selector.now !== selected) {
+    await requestCore(`/proxies/${encodeURIComponent(selectorName)}`, {
+      method: 'PUT',
+      body: { name: selected }
+    });
+  }
+  settings.currentSelector = selectorName;
+  settings.currentProxy = selected;
+  saveSettings();
+  updateCliSelection(findProfile(settings.currentProfileId));
+}
+
+async function stopCoreAndWait(timeoutMs = 4000) {
+  const child = coreProcess;
+  if (!child || child.killed) {
+    coreProcess = null;
+    return;
+  }
+  await new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish();
+    }, timeoutMs);
+    child.once('exit', finish);
+    child.kill('SIGTERM');
+  });
+  if (coreProcess === child) {
+    coreProcess = null;
+  }
+}
+
 async function restartCore() {
-  stopCore();
-  await new Promise(resolve => setTimeout(resolve, 300));
+  await stopCoreAndWait();
   return startCore();
 }
 
@@ -607,8 +833,49 @@ async function setGnomeProxy(enabled) {
     'set',
     'org.gnome.system.proxy',
     'ignore-hosts',
-    "['localhost', '127.0.0.0/8', '::1']"
+    `[${getBypassHosts().map(host => `'${host.replace(/'/g, "'\\''")}'`).join(', ')}]`
   ]);
+}
+
+function shellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function writeShellProxyState(enabled) {
+  const variables = [
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'ALL_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'all_proxy',
+    'no_proxy'
+  ];
+  const lines = [
+    '# Generated by SilverVPN. Changes are overwritten automatically.',
+    `export SILVERVPN_PROXY_ENABLED=${enabled ? '1' : '0'}`
+  ];
+
+  if (enabled) {
+    const httpProxy = `http://${CONTROL_HOST}:${HTTP_PROXY_PORT}`;
+    const socksProxy = `socks5h://${CONTROL_HOST}:${SOCKS_PROXY_PORT}`;
+    const noProxy = getBypassHosts().join(',');
+    lines.push(
+      `export HTTP_PROXY=${shellSingleQuote(httpProxy)}`,
+      `export HTTPS_PROXY=${shellSingleQuote(httpProxy)}`,
+      `export ALL_PROXY=${shellSingleQuote(socksProxy)}`,
+      `export NO_PROXY=${shellSingleQuote(noProxy)}`,
+      'export http_proxy="$HTTP_PROXY"',
+      'export https_proxy="$HTTPS_PROXY"',
+      'export all_proxy="$ALL_PROXY"',
+      'export no_proxy="$NO_PROXY"'
+    );
+  } else {
+    lines.push(`unset ${variables.join(' ')}`);
+  }
+
+  fs.writeFileSync(runtime.shellProxyFile, `${lines.join('\n')}\n`, { mode: 0o600 });
 }
 
 async function setSystemProxy(enabled) {
@@ -619,9 +886,13 @@ async function setSystemProxy(enabled) {
   }
 
   if (enabled) {
-    await startCore();
+    const coreStarted = await startCore();
+    if (!coreStarted) {
+      throw new Error('SilverVPN 核心启动失败，未开启系统和终端代理。请查看核心日志。');
+    }
   }
   await setGnomeProxy(enabled);
+  writeShellProxyState(enabled);
   settings.systemProxy = enabled;
   saveSettings();
 }
@@ -632,6 +903,7 @@ async function setProxyMode(value) {
   fs.writeFileSync(runtime.activeConfigFile, ensureTrailingNewline(writeScalarConfigValue(currentText, 'mode', mode)));
 
   settings.mode = mode;
+  settings.currentSelector = mode === 'Global' ? 'GLOBAL' : 'Proxy';
   saveSettings();
 
   let applied = false;
@@ -643,6 +915,16 @@ async function setProxyMode(value) {
         body: { mode }
       });
       applied = true;
+      if (mode === 'Global' && settings.currentProxy) {
+        const proxiesResponse = await readCoreProxies();
+        const globalSelector = (proxiesResponse.proxies || {}).GLOBAL || {};
+        if (Array.isArray(globalSelector.all) && globalSelector.all.includes(settings.currentProxy)) {
+          await requestCore('/proxies/GLOBAL', {
+            method: 'PUT',
+            body: { name: settings.currentProxy }
+          });
+        }
+      }
     } catch (error) {
       applyError = error.message || String(error);
     }
@@ -658,7 +940,7 @@ async function setProxyMode(value) {
 }
 
 function autostartFilePath() {
-  return path.join(os.homedir(), '.config', 'autostart', 'xiongmao-vpn-linux.desktop');
+  return path.join(os.homedir(), '.config', 'autostart', 'silvervpn.desktop');
 }
 
 function setAutostart(enabled) {
@@ -679,7 +961,7 @@ function setAutostart(enabled) {
       '[Desktop Entry]',
       'Type=Application',
       `Name=${APP_NAME}`,
-      `Exec=${process.execPath}`,
+      `Exec=${process.execPath} --no-sandbox ${app.getAppPath()}`,
       'Terminal=false',
       'X-GNOME-Autostart-enabled=true'
     ].join('\n')
@@ -750,6 +1032,132 @@ function writeSubscriptions(value) {
   writeJson(runtime.subscriptionsFile, value);
 }
 
+function profileId(seed) {
+  return crypto.createHash('sha1').update(String(seed || Date.now())).digest('hex').slice(0, 12);
+}
+
+function normalizeProfileRecord(item) {
+  if (!item || !item.fileName) {
+    return null;
+  }
+  const id = item.id || profileId(item.fileName || item.url || item.name);
+  return {
+    id,
+    fileName: item.fileName,
+    name: item.name || item.label || path.basename(item.fileName, path.extname(item.fileName)),
+    kind: item.kind || item.sourceType || (item.url ? 'subscription-url' : 'file'),
+    sourceType: item.sourceType || item.kind || '',
+    url: item.url || item.subscriptionUrl || '',
+    urlDisplay: item.urlDisplay || item.subscriptionUrlDisplay || (item.url ? redactUrl(item.url) : ''),
+    username: item.username || '',
+    proxyCount: Number.isInteger(item.proxyCount) ? item.proxyCount : null,
+    importedAt: item.importedAt || ''
+  };
+}
+
+function readProfiles() {
+  const data = readSubscriptions();
+  const profiles = (data.subscriptions || []).map(normalizeProfileRecord).filter(Boolean);
+  return profiles;
+}
+
+function writeProfiles(profiles) {
+  writeSubscriptions({ subscriptions: profiles.map(normalizeProfileRecord).filter(Boolean) });
+}
+
+function findProfile(identifier) {
+  const value = String(identifier || '');
+  return readProfiles().find(item => item.id === value || item.fileName === value) || null;
+}
+
+function buildProfileName(kind, profile, options = {}) {
+  if (options.name) {
+    return options.name;
+  }
+  if (kind === 'account') {
+    return `SilverVPN Account${options.username ? ` (${options.username})` : ''}`;
+  }
+  return profile.name || (profile.sourcePath ? path.basename(profile.sourcePath) : '') || 'Custom Subscription';
+}
+
+function saveActiveConfigAsProfile(kind, options = {}) {
+  const cliSettings = readCliSettings();
+  const profile = cliSettings.profile || {};
+  const seed =
+    options.idSeed ||
+    profile.subscriptionUrl ||
+    profile.sourcePath ||
+    options.source ||
+    `${kind}-${profile.name || ''}-${options.username || ''}`;
+  const id = `${kind}-${profileId(seed)}`;
+  const target = path.join(runtime.subscriptionsDir, `${id}.yaml`);
+  ensureDir(runtime.subscriptionsDir);
+  fs.copyFileSync(runtime.activeConfigFile, target);
+
+  const record = normalizeProfileRecord({
+    id,
+    fileName: target,
+    name: buildProfileName(kind, profile, options),
+    kind,
+    sourceType: profile.sourceType || kind,
+    url: profile.subscriptionUrl || options.source || '',
+    urlDisplay: profile.subscriptionUrlDisplay || (profile.subscriptionUrl ? redactUrl(profile.subscriptionUrl) : ''),
+    username: profile.username || options.username || '',
+    proxyCount: Number.isInteger(profile.proxyCount) ? profile.proxyCount : extractProxyNames(readActiveConfigText()).length,
+    importedAt: profile.importedAt || new Date().toISOString()
+  });
+
+  const profiles = readProfiles().filter(item => item.id !== id && item.fileName !== target);
+  profiles.push(record);
+  writeProfiles(profiles);
+  settings.currentProfile = target;
+  settings.currentProfileId = id;
+  saveSettings();
+  updateCliSelection(record);
+  return record;
+}
+
+function updateCliSelection(record) {
+  const file = path.join(runtime.userData, 'settings.json');
+  const cliSettings = readJson(file, {});
+  if (record) {
+    cliSettings.currentProfileId = record.id;
+    cliSettings.currentProfile = runtime.activeConfigFile;
+  }
+  cliSettings.currentSelector = settings.currentSelector || 'Proxy';
+  cliSettings.currentProxy = settings.currentProxy || '';
+  writeJson(file, cliSettings);
+}
+
+function synchronizeProfileStateFromCli() {
+  const cliSettings = readCliSettings();
+  const profiles = readProfiles();
+  if (!profiles.length) {
+    return;
+  }
+
+  let selected = findProfile(cliSettings.currentProfileId);
+  if (!selected && cliSettings.profile && cliSettings.profile.sourceType === 'account-subscription') {
+    const username = (cliSettings.auth && cliSettings.auth.username) || cliSettings.profile.username || '';
+    selected = profiles
+      .filter(profile => profile.kind === 'account' && (!username || profile.username === username))
+      .sort((left, right) => String(right.importedAt || '').localeCompare(String(left.importedAt || '')))[0];
+  }
+  if (!selected || !fs.existsSync(selected.fileName)) {
+    return;
+  }
+
+  settings.currentProfileId = selected.id;
+  settings.currentProfile = selected.fileName;
+  if (cliSettings.currentProxy) {
+    settings.currentProxy = cliSettings.currentProxy;
+  }
+  if (cliSettings.currentSelector) {
+    settings.currentSelector = cliSettings.currentSelector;
+  }
+  saveSettings();
+}
+
 async function addSubscription(url) {
   if (!url || !/^https?:\/\//i.test(url)) {
     throw new Error('请输入有效的 HTTP/HTTPS 订阅地址。');
@@ -778,8 +1186,20 @@ async function switchProfile(fileName) {
     fs.copyFileSync(fileName, runtime.activeConfigFile);
   }
   settings.currentProfile = fileName;
+  const record = readProfiles().find(item => path.resolve(item.fileName) === path.resolve(fileName));
+  settings.currentProfileId = record ? record.id : '';
   saveSettings();
+  updateCliSelection(record);
   await restartCore();
+}
+
+async function switchProfileFromGui(payload = {}) {
+  const record = findProfile(payload.id || payload.fileName || payload.profile);
+  if (!record) {
+    throw new Error('请选择有效的配置方案。');
+  }
+  await switchProfile(record.fileName);
+  return buildDashboard();
 }
 
 async function importConfigFile() {
@@ -1022,7 +1442,7 @@ async function checkDelay(names) {
     values.map(async name => {
       try {
         return await requestCore(
-          `/proxies/${encodeURIComponent(name)}/delay?timeout=10000&url=${encodeURIComponent('https://www.google.com')}`
+          `/proxies/${encodeURIComponent(name)}/delay?timeout=10000&url=${encodeURIComponent(DEFAULT_DELAY_TEST_URL)}`
         );
       } catch (error) {
         return { delay: -1 };
@@ -1047,8 +1467,14 @@ async function readCoreProxies() {
   }
 }
 
-function pickSelectorName(proxiesResponse) {
+function pickSelectorName(proxiesResponse, mode) {
   const proxies = (proxiesResponse && proxiesResponse.proxies) || {};
+  if (mode === 'Global' && proxies.GLOBAL && Array.isArray(proxies.GLOBAL.all)) {
+    return 'GLOBAL';
+  }
+  if (mode !== 'Global' && proxies.Proxy && Array.isArray(proxies.Proxy.all)) {
+    return 'Proxy';
+  }
   const saved = settings.currentSelector || 'Proxy';
   if (proxies[saved] && Array.isArray(proxies[saved].all)) {
     return saved;
@@ -1065,7 +1491,15 @@ function buildProxyRows(proxiesResponse, selectorName) {
   const selector = proxies[selectorName] || {};
   const current = selector.now || settings.currentProxy || '';
   const names = Array.isArray(selector.all) ? selector.all : [];
-  return names.map(name => {
+  return names
+    .filter(name => {
+      if (selectorName !== 'GLOBAL') {
+        return true;
+      }
+      const type = String((proxies[name] || {}).type || '').toLowerCase();
+      return !['selector', 'direct', 'reject', 'pass', 'compatible'].includes(type);
+    })
+    .map(name => {
     const detail = proxies[name] || {};
     return {
       name,
@@ -1074,7 +1508,7 @@ function buildProxyRows(proxiesResponse, selectorName) {
       selected: name === current,
       history: Array.isArray(detail.history) ? detail.history.slice(-5) : []
     };
-  });
+    });
 }
 
 function readCliSettings() {
@@ -1115,10 +1549,11 @@ async function buildDashboard() {
   const configs = await readCoreConfigs();
   const normalizedMode = normalizeStoredMode(configs.mode);
   const proxiesResponse = await readCoreProxies();
-  const selectorName = pickSelectorName(proxiesResponse);
+  const selectorName = pickSelectorName(proxiesResponse, normalizedMode);
   const selector = ((proxiesResponse && proxiesResponse.proxies) || {})[selectorName] || {};
   const rows = buildProxyRows(proxiesResponse, selectorName);
   const account = buildAccountSummary();
+  const profiles = readProfiles();
 
   return {
     appName: APP_NAME,
@@ -1141,12 +1576,17 @@ async function buildDashboard() {
       systemProxy: Boolean(settings.systemProxy),
       startWithSystem: Boolean(settings.startWithSystem),
       holdProxy: Boolean(settings.holdProxy),
+      language: settings.language || 'zh-CN',
+      defaultBypassHosts: DEFAULT_BYPASS_HOSTS,
+      bypassHosts: normalizeBypassHosts(settings.bypassHosts || []),
       currentProfile: settings.currentProfile || '',
+      currentProfileId: settings.currentProfileId || '',
       currentSelector: selectorName,
       currentProxy: selector.now || settings.currentProxy || ''
     },
     account,
-    subscriptions: readSubscriptions().subscriptions || [],
+    subscriptions: profiles,
+    activeProfile: profiles.find(item => item.id === settings.currentProfileId || item.fileName === settings.currentProfile) || null,
     proxies: {
       selector: selectorName,
       current: selector.now || settings.currentProxy || '',
@@ -1157,7 +1597,8 @@ async function buildDashboard() {
 }
 
 async function switchProxyFromGui(payload = {}) {
-  const selector = payload.selector || settings.currentSelector || 'Proxy';
+  const mode = normalizeStoredMode((await readCoreConfigs()).mode);
+  const selector = mode === 'Global' ? 'GLOBAL' : payload.selector || 'Proxy';
   const proxy = payload.proxy || payload.name || '';
   if (!proxy) {
     throw new Error('请选择要切换的节点。');
@@ -1172,6 +1613,7 @@ async function switchProxyFromGui(payload = {}) {
   settings.currentSelector = selector;
   settings.currentProxy = proxy;
   saveSettings();
+  updateCliSelection(findProfile(settings.currentProfileId));
   return buildDashboard();
 }
 
@@ -1184,14 +1626,30 @@ async function checkDelaysFromGui(payload = {}) {
   }));
 }
 
+async function setBypassHostsFromGui(payload = {}) {
+  settings.bypassHosts = normalizeBypassHosts(payload.hosts || payload.text || '');
+  saveSettings();
+  if (settings.systemProxy) {
+    await setGnomeProxy(true);
+  }
+  await restartCore();
+  return buildDashboard();
+}
+
+function setLanguageFromGui(payload = {}) {
+  const language = String(payload.language || '').toLowerCase() === 'en' ? 'en' : 'zh-CN';
+  settings.language = language;
+  saveSettings();
+  return buildDashboard();
+}
+
 async function importSourceFromGui(source) {
   const value = String(source || '').trim();
   if (!value) {
     throw new Error('请输入订阅地址，或选择要导入的配置文件。');
   }
   const result = await runCli(['import', value]);
-  settings.currentProfile = runtime.activeConfigFile;
-  saveSettings();
+  saveActiveConfigAsProfile('custom', { source: value });
   await restartCore();
   return {
     ok: true,
@@ -1231,7 +1689,13 @@ async function loginFromGui(payload = {}) {
       XIONGMAO_PASSWORD: password
     }
   });
-  await restartCore();
+  if (!result.json || !result.json.imported || Number(result.json.imported.proxyCount || 0) < 1) {
+    throw new Error('账号登录成功，但服务端没有返回可用的节点订阅。');
+  }
+  saveActiveConfigAsProfile('account', { username });
+  if (!(await restartCore())) {
+    throw new Error('节点已更新，但代理核心启动失败，请查看核心日志。');
+  }
   return {
     ok: true,
     result: result.json,
@@ -1246,7 +1710,14 @@ async function refreshUserFromGui(payload = {}) {
     args.push('--base', base);
   }
   const result = await runCli(args);
-  await restartCore();
+  if (!result.json || !result.json.imported || Number(result.json.imported.proxyCount || 0) < 1) {
+    throw new Error('账号已刷新，但服务端没有返回可用的节点订阅。');
+  }
+  const auth = (readCliSettings().auth || {});
+  saveActiveConfigAsProfile('account', { username: auth.username || '' });
+  if (!(await restartCore())) {
+    throw new Error('节点已更新，但代理核心启动失败，请查看核心日志。');
+  }
   return {
     ok: true,
     result: result.json,
@@ -1300,6 +1771,200 @@ async function testUrlFromGui(payload = {}) {
     timeTotal: fields.time_total || '',
     proxy: `http://${CONTROL_HOST}:${summary.port}`,
     stderr: result.stderr.trim()
+  };
+}
+
+async function detectIpFromGui() {
+  if (!commandAvailable('curl')) {
+    throw new Error('未找到 curl，无法查询出口 IP。');
+  }
+  if (!coreIsRunning()) {
+    await startCore();
+  }
+  const summary = readConfigSummary();
+  const proxy = `http://${CONTROL_HOST}:${summary.port}`;
+  const baseArgs = ['-L', '-sS', '--connect-timeout', '8', '--max-time', '20', '-x', proxy];
+  let source = 'ipinfo.io';
+  let info = {};
+
+  try {
+    const result = await runCapture('curl', [...baseArgs, 'https://ipinfo.io/json']);
+    info = parseJsonOutput(result.stdout) || {};
+  } catch (error) {
+    info = {};
+  }
+
+  if (!info.ip) {
+    source = 'api.ipify.org';
+    const result = await runCapture('curl', [...baseArgs, 'https://api.ipify.org?format=json']);
+    info = parseJsonOutput(result.stdout) || {};
+  }
+
+  return {
+    ok: Boolean(info.ip),
+    ip: info.ip || '',
+    city: info.city || '',
+    region: info.region || '',
+    country: info.country || '',
+    org: info.org || '',
+    source,
+    proxy
+  };
+}
+
+function captureSync(command, args) {
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    env: process.env
+  });
+  return result.status === 0 ? String(result.stdout || '').trim() : '';
+}
+
+function stripGsettingsValue(value) {
+  return String(value || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
+function getGnomeProxyStatus() {
+  if (!commandAvailable('gsettings')) {
+    return { available: false, mode: 'unknown' };
+  }
+  const mode = stripGsettingsValue(captureSync('gsettings', ['get', 'org.gnome.system.proxy', 'mode']));
+  const httpHost = stripGsettingsValue(captureSync('gsettings', ['get', 'org.gnome.system.proxy.http', 'host']));
+  const httpPort = Number(captureSync('gsettings', ['get', 'org.gnome.system.proxy.http', 'port']) || 0);
+  const httpsHost = stripGsettingsValue(captureSync('gsettings', ['get', 'org.gnome.system.proxy.https', 'host']));
+  const httpsPort = Number(captureSync('gsettings', ['get', 'org.gnome.system.proxy.https', 'port']) || 0);
+  return {
+    available: true,
+    mode: mode || 'none',
+    http: httpHost && httpPort ? `${httpHost}:${httpPort}` : '',
+    https: httpsHost && httpsPort ? `${httpsHost}:${httpsPort}` : '',
+    ownedBySilverVPN:
+      mode === 'manual' &&
+      httpHost === CONTROL_HOST &&
+      httpPort === HTTP_PROXY_PORT &&
+      httpsHost === CONTROL_HOST &&
+      httpsPort === HTTP_PROXY_PORT
+  };
+}
+
+async function queryPublicIp(proxyUrl = '') {
+  if (!commandAvailable('curl')) {
+    return { ok: false, error: 'curl unavailable' };
+  }
+  const args = ['-L', '-sS', '--connect-timeout', '5', '--max-time', '10'];
+  if (proxyUrl) {
+    args.push('-x', proxyUrl);
+  } else {
+    args.push('--noproxy', '*');
+  }
+  args.push('https://ipinfo.io/json');
+  try {
+    const result = await runCapture('curl', args, {
+      env: {
+        HTTP_PROXY: '',
+        HTTPS_PROXY: '',
+        ALL_PROXY: '',
+        http_proxy: '',
+        https_proxy: '',
+        all_proxy: ''
+      }
+    });
+    const info = parseJsonOutput(result.stdout) || {};
+    return {
+      ok: Boolean(info.ip),
+      ip: info.ip || '',
+      country: info.country || '',
+      region: info.region || '',
+      city: info.city || '',
+      org: info.org || ''
+    };
+  } catch (error) {
+    return { ok: false, error: error.message || String(error) };
+  }
+}
+
+function getInterfaceSummary() {
+  const interfaces = os.networkInterfaces();
+  return Object.entries(interfaces)
+    .map(([name, addresses]) => {
+      const usable = (addresses || []).filter(address => !address.internal);
+      return {
+        name,
+        addresses: usable.map(address => address.address),
+        tunnel: /^(tun|tap|wg|ppp|tailscale|utun|vpn|ipsec|lightway|inode)/i.test(name)
+      };
+    })
+    .filter(item => item.addresses.length > 0);
+}
+
+function getVpnProcesses() {
+  const output = captureSync('ps', ['-eo', 'pid=,comm=,args=']);
+  if (!output) {
+    return [];
+  }
+  return output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => /(expressvpn|inode|openvpn|wireguard|wg-quick|tailscale|strongswan|ipsec|mihomo|clash)/i.test(line))
+    .slice(0, 20);
+}
+
+function getListeningProxyPorts() {
+  const output = captureSync('ss', ['-ltnp']);
+  const ports = [HTTP_PROXY_PORT, SOCKS_PROXY_PORT, PUBLIC_CONTROL_PORT, CORE_CONTROL_PORT];
+  return ports.map(port => ({
+    port,
+    listening: new RegExp(`[:.]${port}\\b`).test(output),
+    detail: output
+      .split(/\r?\n/)
+      .find(line => new RegExp(`[:.]${port}\\b`).test(line)) || ''
+  }));
+}
+
+async function getNetworkStatusFromGui() {
+  const interfaces = getInterfaceSummary();
+  const directPromise = queryPublicIp();
+  const silverPromise = coreIsRunning()
+    ? queryPublicIp(`http://${CONTROL_HOST}:${HTTP_PROXY_PORT}`)
+    : Promise.resolve({ ok: false, inactive: true, error: 'SilverVPN core is stopped' });
+  const [directEgress, silverEgress] = await Promise.all([directPromise, silverPromise]);
+  const gnomeProxy = getGnomeProxyStatus();
+  const environmentProxy = {
+    HTTP_PROXY: process.env.HTTP_PROXY || process.env.http_proxy || '',
+    HTTPS_PROXY: process.env.HTTPS_PROXY || process.env.https_proxy || '',
+    ALL_PROXY: process.env.ALL_PROXY || process.env.all_proxy || '',
+    NO_PROXY: process.env.NO_PROXY || process.env.no_proxy || ''
+  };
+  const tunnelInterfaces = interfaces.filter(item => item.tunnel);
+  const vpnProcesses = getVpnProcesses();
+
+  return {
+    checkedAt: new Date().toISOString(),
+    silverVPN: {
+      coreRunning: coreIsRunning(),
+      mode: normalizeStoredMode((await readCoreConfigs()).mode),
+      selector: settings.currentSelector || 'Proxy',
+      node: settings.currentProxy || '',
+      httpProxy: `${CONTROL_HOST}:${HTTP_PROXY_PORT}`,
+      socksProxy: `${CONTROL_HOST}:${SOCKS_PROXY_PORT}`
+    },
+    gnomeProxy,
+    environmentProxy,
+    directEgress,
+    silverEgress,
+    routes: {
+      ipv4: captureSync('ip', ['route', 'show', 'default']),
+      ipv6: captureSync('ip', ['-6', 'route', 'show', 'default'])
+    },
+    interfaces,
+    tunnelInterfaces,
+    vpnProcesses,
+    listeningPorts: getListeningProxyPorts(),
+    conflicts: [
+      ...(tunnelInterfaces.length ? [`检测到隧道网卡：${tunnelInterfaces.map(item => item.name).join(', ')}`] : []),
+      ...(vpnProcesses.some(line => !/(mihomo|clash)/i.test(line)) ? ['检测到其他 VPN 进程，默认路由可能由其他软件控制。'] : []),
+      ...(gnomeProxy.mode === 'manual' && !gnomeProxy.ownedBySilverVPN ? ['系统代理已启用，但不是 SilverVPN 的本地端口。'] : [])
+    ]
   };
 }
 
@@ -1360,6 +2025,12 @@ async function handleGuiAction(action, payload = {}) {
       return switchProxyFromGui(payload);
     case 'check-delays':
       return checkDelaysFromGui(payload);
+    case 'set-bypass-hosts':
+      return setBypassHostsFromGui(payload);
+    case 'set-language':
+      return setLanguageFromGui(payload);
+    case 'switch-profile':
+      return switchProfileFromGui(payload);
     case 'import-source':
       return importSourceFromGui(payload.source);
     case 'import-file':
@@ -1370,6 +2041,10 @@ async function handleGuiAction(action, payload = {}) {
       return refreshUserFromGui(payload);
     case 'test-url':
       return testUrlFromGui(payload);
+    case 'detect-ip':
+      return detectIpFromGui();
+    case 'network-status':
+      return getNetworkStatusFromGui();
     case 'test-tcp':
       return testTcpFromGui(payload);
     case 'open-config-dir':
@@ -1543,21 +2218,33 @@ function createMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (app.isReady()) {
+      createWindow();
+    }
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 function createTray() {
   if (!fs.existsSync(runtime.iconFile)) {
     return;
   }
   tray = new Tray(runtime.iconFile);
   tray.setToolTip(APP_NAME);
+  tray.on('click', showMainWindow);
+  tray.on('double-click', showMainWindow);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
         label: '显示主界面',
-        click: () => {
-          if (mainWindow) {
-            mainWindow.show();
-          }
-        }
+        click: showMainWindow
       },
       {
         label: '打开配置目录',
@@ -1576,8 +2263,8 @@ function createTray() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 980,
-    height: 620,
+    width: 1360,
+    height: 820,
     minWidth: 900,
     minHeight: 560,
     title: APP_NAME,
@@ -1603,23 +2290,32 @@ function createWindow() {
 async function bootstrap() {
   app.setName(APP_NAME);
   initializeFilesystem();
+  settings.systemProxy = false;
+  writeShellProxyState(false);
+  settings.currentSelector = normalizeStoredMode(readConfigSummary().mode) === 'Global' ? 'GLOBAL' : 'Proxy';
+  saveSettings();
+  if (getGnomeProxyStatus().ownedBySilverVPN) {
+    await setGnomeProxy(false);
+  }
   updateGlobals();
   installIpcBridge();
   createMenu();
   startCompatServer();
-  await startCore();
   createWindow();
   createTray();
 }
 
-app.whenReady().then(bootstrap);
+const singleInstanceLock = app.requestSingleInstanceLock();
+
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', showMainWindow);
+  app.whenReady().then(bootstrap);
+}
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  } else if (mainWindow) {
-    mainWindow.show();
-  }
+  showMainWindow();
 });
 
 app.on('before-quit', event => {

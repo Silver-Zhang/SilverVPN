@@ -1,6 +1,6 @@
 'use strict';
 
-const { ipcRenderer, remote } = require('electron');
+const { ipcRenderer, remote, clipboard } = require('electron');
 
 function seedLocalMode() {
   const defaultUser = {
@@ -66,6 +66,9 @@ window.electronRemote = remote;
 window.panda = {
   invoke(action, payload = {}) {
     return ipcRenderer.invoke('PANDA_GUI', action, payload);
+  },
+  copyText(value) {
+    clipboard.writeText(String(value || ''));
   }
 };
 

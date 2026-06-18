@@ -1,18 +1,20 @@
 {
-  "name": "xiongmao-vpn-linux",
+  "name": "silvervpn",
   "version": "0.1.0",
   "private": true,
-  "description": "Linux desktop client based on the macOS Xiongmao VPN Electron bundle.",
+  "description": "SilverVPN Linux desktop proxy client.",
   "main": "main.js",
-  "productName": "熊猫上网 Linux",
+  "productName": "SilverVPN",
   "scripts": {
     "cli": "node cli.js",
     "serve": "node cli.js serve",
     "doctor": "node cli.js doctor",
     "verify": "node scripts/verify.js",
     "verify:full": "node scripts/verify.js --require-subscription",
-    "verify:real": "node scripts/verify.js --require-subscription --real-url subscription.url",
+    "verify:real": "node scripts/verify.js --require-subscription --real-url 38DFF325-8AE6-40A3-A8CD-4774DFE711E2.url",
     "start": "electron .",
+    "install:desktop": "./scripts/install.sh",
+    "update:desktop": "./scripts/update.sh",
     "check": "node --check cli.js && node --check main.js && node --check preload.js && node --check renderer/app.js && node --check scripts/verify.js",
     "pack": "electron-builder --linux AppImage deb"
   },
@@ -21,8 +23,8 @@
     "electron-builder": "^22.14.13"
   },
   "build": {
-    "appId": "com.xiongmao.vpn.linux",
-    "productName": "熊猫上网 Linux",
+    "appId": "com.silver.vpn.linux",
+    "productName": "SilverVPN",
     "files": [
       "main.js",
       "cli.js",

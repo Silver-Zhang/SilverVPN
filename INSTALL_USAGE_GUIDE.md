@@ -1,443 +1,329 @@
-# 熊猫上网 Linux 安装指南和使用教程
+# SilverVPN 安装指南和使用教程
 
-更新时间：2026-06-17
+更新时间：2026-06-18
 
-本文档面向 `/home/workspace/codex_workspace/xiongmaosw` 这份 Linux 客户端。它可以在没有图形界面的服务器上运行 CLI，也可以在 Linux 桌面环境中启动 Electron 图形界面。CLI 和图形界面共用同一份用户数据目录，账号登录、订阅刷新、模式切换、节点切换和连通性测试都可以在图形界面中完成。
+SilverVPN 是一个 Linux 桌面代理客户端。它使用 `mihomo`/Clash-compatible 核心，提供图形界面、系统代理、智能代理/全局代理/直连模式、节点列表、多个订阅方案、内网绕过规则和出口 IP 测试。
 
-## 1. 当前主机状态
+## 1. 新 Linux 主机从零安装
 
-这台主机上的项目目录：
+第一步是拉取仓库：
 
 ```bash
-cd /home/workspace/codex_workspace/xiongmaosw
+git clone https://github.com/Silver-Zhang/SilverVPN.git
+cd SilverVPN
 ```
 
-当前已经具备：
-
-- Node.js 环境。
-- 工程内 mihomo 核心：`resources/clash-binaries/mihomo-linux-amd64`。
-- 一个真实订阅文件；公开仓库中以 `subscription.url` 占位，不随仓库发布。
-- CLI 命令：`doctor`、`status`、`import`、`login`、`refresh-user`、`serve`。
-
-本轮没有使用 `sudo`，也没有修改系统级配置。
-
-## 2. 从零安装
-
-如果换到一台新 Linux 主机，按下面步骤准备。
-
-### 2.1 安装 Node 依赖
+第二步执行一键安装：
 
 ```bash
-cd /home/workspace/codex_workspace/xiongmaosw
-npm install
+./scripts/install.sh
 ```
 
-如果只运行 CLI，依赖较少；如果要运行 Electron 图形界面，需要系统具备桌面环境、X11/Wayland 和 Electron 所需运行库。
+安装脚本会自动执行：
 
-### 2.2 安装 mihomo 核心
+- `npm install`
+- 下载 Linux `mihomo` 核心到 `resources/clash-binaries/`
+- 创建启动命令 `~/.local/bin/silvervpn`
+- 创建 `silvervpn-run`、`silvervpn-code`、`silvervpn-claude`
+- 创建应用菜单入口 `~/.local/share/applications/silvervpn.desktop`
+- 如果桌面目录存在，创建 `SilverVPN.desktop`
 
-优先使用工程内脚本安装，不需要 `sudo`：
+脚本不使用 `sudo`，只写当前用户目录和当前项目目录。
+
+应用菜单只保留 `SilverVPN` 主程序。`silvervpn-code` 等代理启动器仅作为终端命令存在，避免被误认为 SilverVPN 图形界面。
+
+启动方式：
 
 ```bash
-./scripts/install-core.sh --dry-run
-./scripts/install-core.sh
+silvervpn
+```
+
+或者在 Linux 应用菜单里搜索 `SilverVPN`。
+
+程序启动后默认保持未连接：不会自动启动代理核心，也不会自动开启系统代理。需要用户明确点击“启动”和“系统代理”。
+
+如果系统缺少 Node.js/npm，先安装 Node.js 18+ 和 npm。Ubuntu 上通常是：
+
+```bash
+sudo apt install -y git curl gzip nodejs npm
+```
+
+如果 GitHub 下载核心失败，可以走已有代理：
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:4780 ./scripts/install.sh
+```
+
+也可以指定 mihomo 下载地址：
+
+```bash
+MIHOMO_DOWNLOAD_URL=https://.../mihomo-linux-amd64-compatible-v1.19.27.gz ./scripts/install.sh
+```
+
+## 2. 仓库更新后的程序更新
+
+推荐直接运行：
+
+```bash
+cd SilverVPN
+./scripts/update.sh
+```
+
+它会在 Git 仓库中执行：
+
+```bash
+git pull --ff-only
+./scripts/install.sh
+```
+
+如果你已经手动执行过 `git pull`，只需要重新运行：
+
+```bash
+./scripts/install.sh
+```
+
+这样会刷新依赖、核心、桌面入口和启动器。
+
+## 3. 代理方式说明
+
+当前 SilverVPN 不是 WireGuard，也不是 TUN 全局虚拟网卡模式。它是：
+
+- 本地 HTTP/HTTPS 代理：`127.0.0.1:4780`
+- 本地 SOCKS5 代理：`127.0.0.1:4781`
+- 本地控制 API：`127.0.0.1:4788`
+- 后端核心：`mihomo`/Clash-compatible core
+
+开启“系统代理”后，GNOME 会把浏览器等桌面应用的 HTTP/HTTPS/SOCKS 流量指向这些本地端口。未启用系统代理时，浏览器通常仍然直连。
+
+当前版本的“系统与终端代理”开关还会自动管理 Bash/Zsh 的代理环境。新终端会立即继承；已经打开的终端会在下一次出现命令提示符时同步。已经运行的 Copilot、Claude Code 或 IDE 进程必须结束后重新启动，因为 Linux 不能从外部修改现有进程的环境。
+
+`ping`、普通 `ssh` 以及不支持 HTTP/SOCKS 代理的程序仍不会自动走代理。它们需要 TUN 路由模式；检测到 ExpressVPN 等其他 VPN 时，SilverVPN 不会启用 TUN。
+
+命令行临时走代理：
+
+```bash
+export HTTP_PROXY=http://127.0.0.1:4780
+export HTTPS_PROXY=http://127.0.0.1:4780
+export http_proxy=http://127.0.0.1:4780
+export https_proxy=http://127.0.0.1:4780
+export NO_PROXY=localhost,127.0.0.1,::1,.reallab.org.cn
+export no_proxy="$NO_PROXY"
+```
+
+取消：
+
+```bash
+unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy NO_PROXY no_proxy
+```
+
+也可以不修改当前 shell：
+
+```bash
+silvervpn-run curl -I https://www.google.com
+```
+
+## 4. 三种模式
+
+图形界面和 CLI 都支持：
+
+```bash
+node cli.js mode rule
+node cli.js mode global
+node cli.js mode direct
+```
+
+含义：
+
+- 智能代理：内网/绕过规则、中国大陆 GEOIP 直连，其余走代理节点。
+- 全局代理：所有进入 HTTP/SOCKS 代理端口的流量走代理策略组。
+- 直连模式：所有进入 HTTP/SOCKS 代理端口的流量直连。
+
+在实验室内网环境下，推荐使用“智能代理 + 系统代理”。这样 GitLab、内网服务器等直连，ChatGPT/Google 等境外流量走代理。
+
+## 5. 直连/绕过地址
+
+右侧 `Direct bypass` 面板可以配置绕过地址。每行一个域名或 CIDR：
+
+```text
+gitlab.example.org
+*.example.org
+192.168.0.0/16
+```
+
+SilverVPN 默认已经内置：
+
+- `localhost`
+- `127.0.0.0/8`
+- `::1`
+- `10.0.0.0/8`
+- `172.16.0.0/12`
+- `192.168.0.0/16`
+- `169.254.0.0/16`
+- `gitlab.reallab.org.cn`
+- `*.reallab.org.cn`
+- `*.local`
+
+点击保存后，规则会同时应用到：
+
+- GNOME 系统代理 ignore-hosts
+- mihomo 运行时 Clash rules
+
+所以用户不需要手动编辑配置文件。
+
+## 6. 账号登录和 Base URL
+
+账号登录需要服务端 API 根地址，也就是界面里的 `API base URL`。这个地址必须支持：
+
+- `POST {base}/v1/login`
+- `GET {base}/v1/userinfo`
+
+如果服务商提供官方 API 域名，就填写这个根地址，例如：
+
+```text
+https://api.example.com
+```
+
+如果只是使用订阅 URL，不需要填写 Base URL，直接在订阅框导入 URL 即可。
+
+当前仓库不硬编码私有服务域名。如果没有服务商提供的 API base URL，账号登录模式无法自动猜出地址。
+
+## 7. 多配置方案和节点列表
+
+SilverVPN 现在把节点来源分成多个 profile：
+
+- `SilverVPN Account (...)`：通过账号登录/刷新得到的节点。
+- `Custom Subscription`：用户手动导入的订阅 URL、`.url`、`sub://...` 或 Clash YAML。
+
+每次导入都会保存成独立 profile。使用方式：
+
+1. 在 `Profiles` 面板导入订阅或登录账号。
+2. 在 profile 下拉框选择要使用的方案。
+3. 中间节点列表会显示该方案里的节点。
+4. 点击节点行里的 `Switch`/`切换`。
+
+不同 profile 的节点互不混在一起。
+
+账号登录或刷新成功后，GUI 会自动切到账号 profile，并检查服务端实际返回的节点数量。全局模式使用 mihomo 的 `GLOBAL` 选择器；智能模式使用 `Proxy` 选择器，界面显示和真实出口保持一致。
+
+## 8. 出口 IP
+
+右侧 `Connectivity` / `连通性测试` 面板有 `Outbound IP` / `出口 IP` 按钮。它会通过当前代理节点查询公网 IP，显示：
+
+- IP
+- country/region/city
+- org/运营商
+- 使用的本地代理
+
+这个 IP 就是访问境外网站时对方看到的公网出口。
+
+## 9. Claude Code 和 VS Code 扩展
+
+网页能打开 Claude，并不代表终端或 VS Code 扩展会自动走代理。GNOME “系统代理”主要供浏览器和遵循桌面代理设置的应用读取；Claude Code 官方使用 `HTTP_PROXY` / `HTTPS_PROXY`，且不支持只配置 SOCKS。
+
+启动 Claude Code：
+
+```bash
+silvervpn-claude
+```
+
+启动带代理环境的 VS Code：
+
+```bash
+silvervpn-code
+```
+
+必须先完全退出已经运行的 VS Code，再运行 `silvervpn-code`。否则旧的 extension host 仍保留启动时的旧环境。
+
+智能模式已将以下 Claude 必需域名明确设置为走节点，不应加入绕过列表：
+
+- `api.anthropic.com`
+- `claude.ai`
+- `platform.claude.com`
+- `downloads.claude.ai`
+- `bridge.claudeusercontent.com`
+
+应绕过的只包括本机、实验室内网和明确的内部站点，例如：
+
+- `localhost`
+- `127.0.0.1`
+- `192.168.0.0/16`
+- `gitlab.reallab.org.cn`
+- `*.reallab.org.cn`
+
+网络检查：
+
+```bash
+silvervpn-run curl -I https://api.anthropic.com
+```
+
+返回 HTTP `401`、`403` 或其他服务端状态，通常说明网络已经到达 Anthropic；连接超时或 DNS 错误才是代理链路问题。
+
+## 10. 网络状态与多个 VPN 冲突
+
+右侧“网络状态”面板会定时显示：
+
+- 不经过 SilverVPN 的直连公网 IP
+- 经过 SilverVPN 本地 HTTP 代理的公网 IP
+- GNOME 当前系统代理及其是否属于 SilverVPN
+- IPv4/IPv6 默认路由
+- `tun`、`tap`、`wg`、`ppp` 等隧道网卡
+- SilverVPN 的 `4780`、`4781`、`4788`、`4790` 监听状态
+- ExpressVPN、iNode、OpenVPN、WireGuard、mihomo 等相关进程
+
+当 SilverVPN 出口已是境外，但“直连出口”仍是中国，这是当前 HTTP 代理模式的正常现象。只有实际使用系统代理或代理环境变量的应用才会显示 SilverVPN 出口。如果 ExpressVPN/iNode 改写默认路由，直连出口和隧道网卡也会反映出来。
+
+### ExpressVPN 兼容原则
+
+SilverVPN 不创建第二张 TUN 网卡，也不修改系统默认路由、ExpressVPN 策略路由、DNS 或 kill switch。原因是两个整机 VPN 同时接管路由时，无法保证 ExpressVPN 完全不受影响。
+
+因此，当“不能影响 ExpressVPN”是前提时：
+
+- ExpressVPN 继续作为系统级 VPN。
+- SilverVPN 只处理进入本地 HTTP/SOCKS 或 GNOME 系统代理的流量。
+- 这些流量仍会按智能规则自动区分境内直连和境外节点。
+- SilverVPN 不承诺接管所有不支持系统代理的后台程序、终端命令、ICMP 或自定义网络协议。
+
+整机自动分流和“ExpressVPN 完全不受影响”不能同时作为强保证。SilverVPN 默认选择后者。
+
+## 11. 语言和程序名
+
+程序名已经改为 `SilverVPN`，桌面启动器、菜单入口和窗口标题都使用 ASCII 名称，避免 Linux 桌面环境中文乱码。
+
+界面提供 `Language` 下拉框：
+
+- `中文`
+- `English`
+
+语言设置保存在用户配置中。
+
+## 12. 常用检查命令
+
+```bash
 node cli.js doctor
-```
-
-`doctor` 里能看到 `mihomo-linux-amd64` 或系统里的 `mihomo` / `clash`，就说明核心可用。
-
-如果系统已经安装了 mihomo，也可以指定：
-
-```bash
-CLASH_CORE=/absolute/path/to/mihomo node cli.js doctor
-```
-
-## 3. 基础健康检查
-
-```bash
-cd /home/workspace/codex_workspace/xiongmaosw
+node cli.js status
 npm run check
 npm run verify
 ```
 
-如果要验证真实订阅文件：
-
-```bash
-npm run verify:real
-```
-
-正常情况下会看到类似：
-
-```text
-verify ok
-real .url import ok: proxyCount=31
-```
-
-## 4. 导入订阅
-
-### 4.1 使用主机上的 `.url` 文件
-
-这是当前最简单的方式：
-
-```bash
-node cli.js import subscription.url
-node cli.js status
-```
-
-`status` 应显示：
-
-```text
-configExists: true
-proxyCount: 31
-```
-
-CLI 会自动把 `.url` 文件里的 `sub://...` 解码成真实订阅地址，并把节点配置保存到默认数据目录。
-
-### 4.2 直接导入订阅 URL
-
-```bash
-node cli.js import 'https://example.com/path/to/subscription'
-node cli.js status
-```
-
-支持以下订阅响应：
-
-- Clash YAML。
-- base64 包裹的 Clash YAML。
-- Shadowrocket 常见的 base64 SSR/VMess URI 列表。
-
-## 5. 账号登录和刷新订阅
-
-不要把真实密码写进命令历史、README 或脚本。推荐用交互式 `read` 输入：
-
-```bash
-cd /home/workspace/codex_workspace/xiongmaosw
-
-read -rp '账号: ' XIONGMAO_USERNAME
-read -rsp '密码: ' XIONGMAO_PASSWORD
-echo
-
-export XIONGMAO_USERNAME
-export XIONGMAO_PASSWORD
-export XIONGMAO_API_BASE='https://你的服务端域名或IP'
-
-node cli.js login
-node cli.js status
-
-unset XIONGMAO_PASSWORD
-```
-
-如果以后只需要刷新账号订阅：
-
-```bash
-export XIONGMAO_API_BASE='https://你的服务端域名或IP'
-node cli.js refresh-user
-node cli.js status
-```
-
-说明：
-
-- `login` 会请求 `{base}/v1/login`，按 macOS 客户端兼容逻辑解码服务端响应。
-- 成功后会保存 cookie 和脱敏后的登录状态。
-- 密码不会写入 `settings.json`。
-- `refresh-user` 会用已保存 cookie 请求 `{base}/v1/userinfo`，并刷新 `pc_sub` 节点。
-
-## 6. 启动代理服务
-
-### 6.1 前台启动
+启动本地服务：
 
 ```bash
 node cli.js serve --port 4788
 ```
 
-看到服务启动后，另开一个终端验证：
+验证端口：
 
 ```bash
 curl http://127.0.0.1:4788/health
 curl http://127.0.0.1:4788/configs
-```
-
-`/health` 返回 `mode: "core"` 表示正在使用真实 mihomo 核心；如果返回 `mode: "demo"`，说明核心未找到或配置不可用。
-
-默认代理端口：
-
-- HTTP 代理：`127.0.0.1:4780`
-- SOCKS5 代理：`127.0.0.1:4781`
-- 本地控制 API：`127.0.0.1:4788`
-
-停止服务：在运行 `serve` 的终端按 `Ctrl+C`。
-
-### 6.2 后台启动
-
-```bash
-nohup node cli.js serve --port 4788 > xiongmao-serve.log 2>&1 &
-echo $! > xiongmao-serve.pid
-```
-
-停止后台服务：
-
-```bash
-kill "$(cat xiongmao-serve.pid)"
-```
-
-确认没有残留：
-
-```bash
-pgrep -af 'node cli.js serve|mihomo-linux-amd64'
-```
-
-## 7. 使用代理
-
-### 7.1 终端临时使用
-
-```bash
-export http_proxy=http://127.0.0.1:4780
-export https_proxy=http://127.0.0.1:4780
-export all_proxy=socks5h://127.0.0.1:4781
-```
-
-验证公网出口：
-
-```bash
-curl -x http://127.0.0.1:4780 https://api.ipify.org
-curl --socks5-hostname 127.0.0.1:4781 https://api.ipify.org
-```
-
-取消代理：
-
-```bash
-unset http_proxy https_proxy all_proxy
-```
-
-### 7.2 浏览器使用
-
-把浏览器代理设置成：
-
-- HTTP/HTTPS：`127.0.0.1`，端口 `4780`
-- SOCKS5：`127.0.0.1`，端口 `4781`
-
-如果浏览器支持规则代理或 SwitchyOmega，可以单独给需要代理的网站走 `127.0.0.1:4780`。
-
-### 7.3 Linux 桌面系统代理
-
-GNOME 桌面可使用系统代理设置：
-
-- HTTP 代理：`127.0.0.1:4780`
-- HTTPS 代理：`127.0.0.1:4780`
-- SOCKS 代理：`127.0.0.1:4781`
-
-当前 CLI 不会自动启用 TUN 网卡；它提供的是 HTTP/SOCKS 代理。
-
-## 8. 代理模式
-
-当前 CLI 支持三种模式：
-
-- 智能代理：`rule`
-- 全局代理：`global`
-- 直连模式：`direct`
-
-### 8.1 智能代理
-
-```bash
-node cli.js mode rule
-node cli.js status
-```
-
-智能代理会使用 Clash/mihomo 规则判断流量。当前真实订阅里的核心规则是：
-
-```yaml
-rules:
-  - GEOIP,CN,DIRECT
-  - MATCH,Proxy
-```
-
-含义：
-
-- 中国大陆 IP 直连。
-- 其他流量走 `Proxy` 策略组。
-
-### 8.2 全局代理
-
-```bash
-node cli.js mode global
-node cli.js status
-```
-
-全局代理表示所有进入本地 HTTP/SOCKS 代理端口的流量都交给 `GLOBAL`/代理策略处理。
-
-### 8.3 直连模式
-
-```bash
-node cli.js mode direct
-node cli.js status
-```
-
-直连模式表示所有进入本地 HTTP/SOCKS 代理端口的流量都直连。
-
-### 8.4 在线切换
-
-如果 `node cli.js serve --port 4788` 正在运行，`mode` 命令会先保存配置，再尝试即时应用到正在运行的 mihomo：
-
-```bash
-node cli.js mode rule
-curl http://127.0.0.1:4788/configs
-```
-
-如果服务没有运行，命令仍会保存配置；下次启动 `serve` 时会按保存后的模式启动。
-
-注意：当前基础版仍然是 HTTP/SOCKS 代理，不是 TUN 全局接管。因此 `ping`、普通 `ssh`、未设置代理的程序不会因为 `mode rule/global/direct` 自动进入代理。浏览器、curl 或其他软件需要配置代理到：
-
-```text
-HTTP/HTTPS: 127.0.0.1:4780
-SOCKS5:     127.0.0.1:4781
-```
-
-## 9. 切换节点
-
-查看策略组：
-
-```bash
 curl http://127.0.0.1:4788/proxies
 ```
 
-切换 `Proxy` 组节点：
+验证 Google/OpenAI：
 
 ```bash
-curl -X PUT \
-  -H 'Content-Type: application/json' \
-  --data '{"name":"节点名称"}' \
-  http://127.0.0.1:4788/proxies/Proxy
+curl -L -x http://127.0.0.1:4780 https://www.google.com/
+curl -L -x http://127.0.0.1:4780 https://api.openai.com/v1/models
 ```
 
-再次查看当前节点：
-
-```bash
-curl http://127.0.0.1:4788/proxies
-```
-
-## 10. ChatGPT / OpenAI 连通性验证
-
-注意：`ping chatgpt.com` 是 ICMP 流量，不会经过 HTTP/SOCKS 代理。当前基础版没有启用 TUN，所以 `ping` 不能代表 VPN 节点是否可用。
-
-更可靠的测试方式是用代理访问 HTTPS：
-
-```bash
-curl -L -sS -o /dev/null \
-  --max-time 25 \
-  -w 'chatgpt status=%{http_code} time=%{time_total}\n' \
-  -x http://127.0.0.1:4780 \
-  https://chatgpt.com/
-
-curl -L -sS -o /dev/null \
-  --max-time 25 \
-  -w 'openai_api status=%{http_code} time=%{time_total}\n' \
-  -x http://127.0.0.1:4780 \
-  https://api.openai.com/v1/models
-```
-
-结果解释：
-
-- `api.openai.com/v1/models` 返回 `401`：正常，表示已经连到 OpenAI API，只是没有提供 API key。
-- `chatgpt.com` 返回 `200` / `3xx`：网页入口可访问。
-- `chatgpt.com` 返回 `403`：网络已经到达目标站点，但被 ChatGPT/Cloudflare 策略拒绝。
-- `000` 或 timeout：该节点到目标站点不通或超时。
-
-2026-06-17 在本主机上的实测结果：
-
-- 账号登录成功，订阅刷新成功。
-- 订阅内 31 个节点被 mihomo 正常识别。
-- `ping -c 3 chatgpt.com`：100% packet loss。这个结果不代表代理不可用，因为 ICMP 没有走代理。
-- 通过 HTTP 代理访问 `api.openai.com/v1/models`：多个节点返回 `401`，说明 OpenAI API 可达。
-- 逐个切换 31 个节点测试 `https://chatgpt.com/`：没有节点返回 `2xx/3xx`；多数节点返回 `403`，部分节点超时或 SSL 连接失败。结论是：当前节点可以到达 OpenAI API，但没有验证出能正常打开 ChatGPT 网页入口的节点。
-
-## 11. 图形界面启动
-
-如果在 Linux 桌面环境中运行：
-
-```bash
-npm start
-```
-
-图形界面会打开“熊猫上网 Linux”控制台，主要区域如下：
-
-- 左侧“连接”：启动/停止 mihomo，切换智能代理、全局代理、直连模式，启用/关闭 GNOME 系统代理。
-- 左侧“账号”：输入服务端 URL、账号和密码后点击“登录并更新”；密码只在本次登录时传给 CLI，不写入配置文件。
-- 中间“节点”：查看当前 `Proxy` 策略组节点，搜索、切换节点，并点击“延迟测试”批量检测节点延迟。
-- 右侧“订阅”：导入 Clash YAML、`.url`、`sub://...` 或 HTTP/HTTPS 订阅地址，也可以点击“导入文件”选择本地文件。
-- 右侧“连通性测试”：通过 `127.0.0.1:4780` HTTP 代理测试 Google、OpenAI API 或自定义 URL；`192.168.9.27:22` 会测试内网 SSH 端口直连可达性。
-
-图形界面中的三种模式和 CLI 完全对应：
-
-- 智能代理：等价于 `node cli.js mode rule`。境内 GEOIP/CN 规则直连，其余命中 `Proxy` 策略组。
-- 全局代理：等价于 `node cli.js mode global`。所有进入 HTTP/SOCKS 代理端口的流量走代理策略。
-- 直连模式：等价于 `node cli.js mode direct`。所有进入 HTTP/SOCKS 代理端口的流量直连。
-
-注意：图形界面当前仍不启用 TUN，所以 `ping`、未设置代理的普通 `ssh` 和其他系统流量不会自动进入代理。需要让应用使用 `127.0.0.1:4780` 或 `127.0.0.1:4781`，或在 GNOME 中启用系统代理。
-
-## 12. 常见问题
-
-### 12.1 `doctor` 找不到核心
-
-执行：
-
-```bash
-./scripts/install-core.sh
-node cli.js doctor
-```
-
-或指定系统核心：
-
-```bash
-CLASH_CORE=/absolute/path/to/mihomo node cli.js doctor
-```
-
-### 12.2 端口被占用
-
-查看占用：
-
-```bash
-ss -lntp | grep -E '4780|4781|4788|4790'
-```
-
-停止旧服务：
-
-```bash
-pgrep -af 'node cli.js serve|mihomo-linux-amd64'
-kill <PID>
-```
-
-### 12.3 `status` 没有节点
-
-重新导入订阅：
-
-```bash
-node cli.js import subscription.url
-node cli.js status
-```
-
-或重新刷新账号订阅：
-
-```bash
-node cli.js refresh-user
-node cli.js status
-```
-
-### 12.4 `ping` 不通但 curl 代理可用
-
-这是当前基础版的正常边界。HTTP/SOCKS 代理不会接管 ICMP。要让 `ping`、所有 App、所有系统流量都经过代理，需要后续实现 TUN 或系统透明代理。
-
-### 12.5 ChatGPT 返回 403
-
-这通常表示请求已经到达 ChatGPT/Cloudflare，但当前节点被拒绝。可以尝试：
-
-- 切换其他节点。
-- 优先测试节点名里标注支持 ChatGPT 的节点。
-- 使用浏览器真实访问而不是 `curl`。
-- 如果所有节点都 403，通常需要服务商提供可用节点，而不是本地客户端代码能单方面解决。
-
-## 13. 安全注意事项
-
-- 不要把账号密码写入文档、脚本或 shell history。
-- 登录后 cookie 会保存在数据目录的 `settings.json`，不要把该文件发给别人。
-- 临时测试建议使用 `--data-dir /tmp/xxx`，测完删除。
-- 只有在明确需要系统级代理或安装系统依赖时才考虑 `sudo`。本项目当前安装核心、导入订阅和启动代理都不需要 `sudo`。
+OpenAI API 返回 `401` 通常表示网络已到达，只是没有提供 API key。

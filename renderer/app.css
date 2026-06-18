@@ -40,6 +40,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -325,6 +326,53 @@ dd {
   border-top: 0;
 }
 
+.compact-list {
+  margin-top: 8px;
+}
+
+.network-panel {
+  border-top: 3px solid var(--green);
+}
+
+.network-state-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.network-state-row .badge {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.network-panel dd {
+  font-size: 12px;
+}
+
+.network-warnings {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid #f2c46d;
+  border-radius: 7px;
+  background: #fff8e7;
+  color: #7a4600;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.network-warnings div + div {
+  margin-top: 5px;
+}
+
+.terminal-button {
+  width: 100%;
+  margin-top: 10px;
+}
+
 .stack-form {
   display: flex;
   flex-direction: column;
@@ -332,6 +380,7 @@ dd {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   min-width: 0;
@@ -347,6 +396,19 @@ input {
   padding: 0 10px;
 }
 
+select {
+  height: 36px;
+  padding: 0 10px;
+}
+
+.field-label {
+  display: block;
+  margin: 10px 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 textarea {
   resize: vertical;
   min-height: 86px;
@@ -355,6 +417,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px var(--blue-soft);

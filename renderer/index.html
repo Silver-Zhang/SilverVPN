@@ -4,16 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0f172a" />
-    <title>熊猫上网 Linux</title>
+    <title>SilverVPN</title>
     <link rel="stylesheet" href="./app.css" />
   </head>
   <body>
     <div id="app" class="app-shell">
       <aside class="sidebar">
         <header class="brand">
-          <div class="brand-mark">熊</div>
+          <div class="brand-mark">S</div>
           <div>
-            <h1>熊猫上网 Linux</h1>
+            <h1>SilverVPN</h1>
             <p id="coreState">正在读取状态</p>
           </div>
         </header>
@@ -40,8 +40,13 @@
           </div>
           <label class="switch-row">
             <input id="systemProxy" type="checkbox" />
-            <span>系统代理</span>
+            <span>系统与终端代理</span>
           </label>
+          <label class="field-label" for="languageSelect">Language</label>
+          <select id="languageSelect">
+            <option value="zh-CN">中文</option>
+            <option value="en">English</option>
+          </select>
           <dl class="metric-list">
             <div>
               <dt>HTTP</dt>
@@ -108,6 +113,50 @@
       </main>
 
       <aside class="inspector">
+        <section class="panel network-panel" aria-labelledby="networkTitle">
+          <div class="panel-title-row">
+            <div>
+              <h2 id="networkTitle">网络状态</h2>
+              <p id="networkCheckedAt" class="section-kicker">尚未检测</p>
+            </div>
+            <button id="refreshNetwork" class="icon-button" title="刷新网络状态" type="button">↻</button>
+          </div>
+          <div class="network-summary">
+            <div class="network-state-row">
+              <span>SilverVPN</span>
+              <span id="silverState" class="badge badge-muted">未连接</span>
+            </div>
+            <dl class="detail-list compact-list">
+              <div>
+                <dt>直连出口</dt>
+                <dd id="directEgress">-</dd>
+              </div>
+              <div>
+                <dt>SilverVPN 出口</dt>
+                <dd id="silverEgress">-</dd>
+              </div>
+              <div>
+                <dt>系统代理</dt>
+                <dd id="systemProxyActual">-</dd>
+              </div>
+              <div>
+                <dt>默认路由</dt>
+                <dd id="defaultRoute">-</dd>
+              </div>
+              <div>
+                <dt>隧道网卡</dt>
+                <dd id="tunnelInterfaces">-</dd>
+              </div>
+              <div>
+                <dt>本地端口</dt>
+                <dd id="listeningPorts">-</dd>
+              </div>
+            </dl>
+            <div id="networkWarnings" class="network-warnings" hidden></div>
+            <button id="copyProxyEnv" class="button terminal-button" type="button">复制终端 / VS Code 代理命令</button>
+          </div>
+        </section>
+
         <section class="panel" aria-labelledby="subscriptionTitle">
           <div class="panel-title-row">
             <h2 id="subscriptionTitle">订阅</h2>
@@ -117,6 +166,10 @@
             <textarea id="subscriptionSource" rows="4" placeholder="订阅 URL / sub://..."></textarea>
             <button class="button button-primary" type="submit">导入订阅</button>
           </form>
+          <label class="field-label" for="profileSelect">配置方案</label>
+          <select id="profileSelect">
+            <option value="">当前配置</option>
+          </select>
           <dl class="detail-list">
             <div>
               <dt>来源</dt>
@@ -133,6 +186,20 @@
           </dl>
         </section>
 
+        <section class="panel" aria-labelledby="bypassTitle">
+          <div class="panel-title-row">
+            <h2 id="bypassTitle">直连/绕过地址</h2>
+            <button id="saveBypass" class="button button-small" type="button">保存</button>
+          </div>
+          <textarea id="bypassHosts" rows="6" placeholder="每行一个域名或网段，例如：&#10;gitlab.example.org&#10;*.example.org&#10;192.168.0.0/16"></textarea>
+          <dl class="detail-list compact-list">
+            <div>
+              <dt>默认</dt>
+              <dd id="defaultBypassHosts">内网网段和 localhost</dd>
+            </div>
+          </dl>
+        </section>
+
         <section class="panel" aria-labelledby="testsTitle">
           <div class="panel-title-row">
             <h2 id="testsTitle">连通性测试</h2>
@@ -141,6 +208,7 @@
           <div class="test-grid">
             <button class="button" data-test-url="https://www.google.com" type="button">Google</button>
             <button class="button" data-test-url="https://api.openai.com/v1/models" type="button">OpenAI</button>
+            <button id="detectIp" class="button" type="button">出口 IP</button>
             <button id="testLan" class="button" type="button">192.168.9.27:22</button>
           </div>
           <form id="customTestForm" class="inline-form">

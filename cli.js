@@ -13,7 +13,8 @@ const DEFAULT_CORE_PORT = 4790;
 const DEFAULT_HTTP_PORT = 4780;
 const DEFAULT_SOCKS_PORT = 4781;
 const IMPORT_MAX_BYTES = 20 * 1024 * 1024;
-const DEFAULT_USER_AGENT = 'xiongmao-vpn-linux-cli/0.1';
+const CORE_START_TIMEOUT_MS = 20000;
+const DEFAULT_USER_AGENT = 'silvervpn-cli/0.1';
 const SHADOWROCKET_USER_AGENT = 'Shadowrocket/1995 CFNetwork/1408.0.4 Darwin/22.5.0';
 const ROCKET_RESPONSE_KEY = 'RocketMaker';
 const DEFAULT_ROCKET_DISCOVERY_URL = 'http://127.0.0.1:4788/rocket';
@@ -38,6 +39,34 @@ const MODE_ALIASES = {
   global: 'global',
   direct: 'direct'
 };
+const DEFAULT_BYPASS_HOSTS = [
+  'localhost',
+  '127.0.0.0/8',
+  '::1',
+  '10.0.0.0/8',
+  '172.16.0.0/12',
+  '192.168.0.0/16',
+  '169.254.0.0/16',
+  'gitlab.reallab.org.cn',
+  '*.reallab.org.cn',
+  '*.local'
+];
+const ALWAYS_PROXY_RULES = [
+  'DOMAIN-SUFFIX,claude.ai,Proxy',
+  'DOMAIN-SUFFIX,anthropic.com,Proxy',
+  'DOMAIN-SUFFIX,claudeusercontent.com,Proxy',
+  'DOMAIN,platform.claude.com,Proxy',
+  'DOMAIN,downloads.claude.ai,Proxy',
+  'DOMAIN-SUFFIX,openai.com,Proxy',
+  'DOMAIN-SUFFIX,chatgpt.com,Proxy',
+  'DOMAIN-SUFFIX,google.com,Proxy',
+  'DOMAIN-SUFFIX,googleapis.com,Proxy',
+  'DOMAIN-SUFFIX,gstatic.com,Proxy',
+  'DOMAIN,storage.googleapis.com,Proxy',
+  'DOMAIN-SUFFIX,github.com,Proxy',
+  'DOMAIN-SUFFIX,githubusercontent.com,Proxy'
+];
+const ALWAYS_DIRECT_RULES = ['GEOIP,CN,DIRECT'];
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -61,6 +90,69 @@ function parseArgs(argv) {
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
+}
+
+function copyDirectory(source, target, overwrite = false) {
+  if (!fs.existsSync(source)) {
+    return;
+  }
+  ensureDir(target);
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name);
+    const to = path.join(target, entry.name);
+    if (entry.isDirectory()) {
+      copyDirectory(from, to, overwrite);
+    } else if (overwrite || !fs.existsSync(to)) {
+      fs.copyFileSync(from, to);
+    }
+  }
+}
+
+function normalizeBypassHosts(values) {
+  const source = Array.isArray(values) ? values : String(values || '').split(/\r?\n/);
+  const cleaned = [];
+  const seen = new Set();
+  for (const item of source) {
+    const value = String(item || '').trim();
+    if (!value || value.startsWith('#') || seen.has(value)) {
+      continue;
+    }
+    cleaned.push(value);
+    seen.add(value);
+  }
+  return cleaned;
+}
+
+function bypassHostToDirectRule(host) {
+  if (host === 'localhost') {
+    return 'DOMAIN,localhost,DIRECT';
+  }
+  if (host === '::1') {
+    return 'IP-CIDR6,::1/128,DIRECT,no-resolve';
+  }
+  if (/^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/.test(host)) {
+    return `IP-CIDR,${host},DIRECT,no-resolve`;
+  }
+  if (/^[0-9a-f:]+\/\d{1,3}$/i.test(host)) {
+    return `IP-CIDR6,${host},DIRECT,no-resolve`;
+  }
+  if (host.startsWith('*.')) {
+    return `DOMAIN-SUFFIX,${host.slice(2)},DIRECT`;
+  }
+  if (host.startsWith('.')) {
+    return `DOMAIN-SUFFIX,${host.slice(1)},DIRECT`;
+  }
+  if (/^[a-z0-9.-]+$/i.test(host)) {
+    return `DOMAIN,${host},DIRECT`;
+  }
+  return '';
+}
+
+function getDirectRules(settings = {}) {
+  return normalizeBypassHosts([
+    ...normalizeBypassHosts([...DEFAULT_BYPASS_HOSTS, ...(settings.bypassHosts || [])]).map(bypassHostToDirectRule),
+    ...ALWAYS_DIRECT_RULES
+  ]);
 }
 
 function readText(file, fallback = '') {
@@ -90,8 +182,9 @@ function readJson(file, fallback) {
 function getPaths(args) {
   const dataDir =
     args['data-dir'] ||
+    process.env.SILVERVPN_DATA_DIR ||
     process.env.XIONGMAO_DATA_DIR ||
-    path.join(os.homedir(), '.config', 'xiongmao-vpn-linux');
+    path.join(os.homedir(), '.config', 'SilverVPN');
   const resources = args.resources || path.join(__dirname, 'resources');
   return {
     dataDir,
@@ -114,7 +207,32 @@ function copyIfMissing(source, target) {
   }
 }
 
+function activeConfigIsPlaceholder(paths) {
+  const text = readText(paths.activeConfigFile);
+  return !text.trim() || text.includes('线路加载失败，请点击左侧刷新按钮');
+}
+
+function migrateLegacyData(paths) {
+  if (fs.existsSync(paths.activeConfigFile) && !activeConfigIsPlaceholder(paths)) {
+    return;
+  }
+  const candidates = [
+    path.join(os.homedir(), '.config', 'silvervpn'),
+    path.join(os.homedir(), '.config', 'SilverVPN'),
+    path.join(os.homedir(), '.config', '熊猫上网 Linux'),
+    path.join(os.homedir(), '.config', 'xiongmao-vpn-linux')
+  ].filter(dir => path.resolve(dir) !== path.resolve(paths.dataDir));
+
+  for (const source of candidates) {
+    if (fs.existsSync(path.join(source, 'clash-configs', 'config.yaml'))) {
+      copyDirectory(source, paths.dataDir, true);
+      return;
+    }
+  }
+}
+
 function initialize(paths) {
+  migrateLegacyData(paths);
   ensureDir(paths.configDir);
   ensureDir(paths.runtimeDir);
   ensureDir(paths.logsDir);
@@ -148,8 +266,8 @@ function writeScalarConfigValue(text, key, value) {
 function readConfigSummary(paths) {
   const text = readText(paths.activeConfigFile);
   return {
-    port: Number(parseScalarConfigValue(text, 'port', DEFAULT_HTTP_PORT)) || DEFAULT_HTTP_PORT,
-    'socks-port': Number(parseScalarConfigValue(text, 'socks-port', DEFAULT_SOCKS_PORT)) || DEFAULT_SOCKS_PORT,
+    port: Number(parseScalarConfigValue(text, 'port', DEFAULT_HTTP_PORT)),
+    'socks-port': Number(parseScalarConfigValue(text, 'socks-port', DEFAULT_SOCKS_PORT)),
     mode: parseScalarConfigValue(text, 'mode', 'Rule'),
     'external-controller': `127.0.0.1:${DEFAULT_CORE_PORT}`
   };
@@ -695,7 +813,7 @@ function stringifyYaml(value) {
   return `${lines.join('\n')}\n`;
 }
 
-function buildClashYamlFromProxies(proxies) {
+function buildClashYamlFromProxies(proxies, settings = {}) {
   const names = proxies.map(proxy => proxy.name);
   return stringifyYaml({
     port: DEFAULT_HTTP_PORT,
@@ -712,7 +830,7 @@ function buildClashYamlFromProxies(proxies) {
         proxies: [...names, 'DIRECT']
       }
     ],
-    rules: ['GEOIP,CN,DIRECT', 'MATCH,Proxy']
+    rules: [...getDirectRules(settings), 'MATCH,Proxy']
   });
 }
 
@@ -1273,11 +1391,43 @@ function patchConfigForRuntime(sourceText, corePort) {
     const pattern = new RegExp(`^${key}:.*$`, 'm');
     text = pattern.test(text) ? text.replace(pattern, line) : `${line}\n${text}`;
   }
-  return text;
+  return ensureDirectRules(text);
+}
+
+function ensureDirectRules(sourceText, settings = {}) {
+  const lines = sourceText.split(/\r?\n/);
+  const rulesIndex = lines.findIndex(line => /^rules:\s*$/.test(line));
+  const routingRules = [...ALWAYS_PROXY_RULES, ...getDirectRules(settings)];
+
+  if (rulesIndex === -1) {
+    const rules = [...routingRules, 'MATCH,Proxy'].map(rule => `  - ${rule}`);
+    return `${sourceText.replace(/\s*$/, '')}\nrules:\n${rules.join('\n')}\n`;
+  }
+
+  let endIndex = rulesIndex + 1;
+  while (endIndex < lines.length && !/^[^\s#][^:]*:\s*/.test(lines[endIndex])) {
+    endIndex += 1;
+  }
+
+  const existingRules = new Set(
+    lines
+      .slice(rulesIndex + 1, endIndex)
+      .map(line => line.trim().replace(/^-\s*/, '').replace(/^["']|["']$/g, ''))
+      .filter(Boolean)
+  );
+  const ruleIndent =
+    lines
+      .slice(rulesIndex + 1, endIndex)
+      .map(line => line.match(/^(\s*)-\s/))
+      .find(Boolean)?.[1] ?? '  ';
+  const missingRules = routingRules.filter(rule => !existingRules.has(rule));
+  lines.splice(rulesIndex + 1, 0, ...missingRules.map(rule => `${ruleIndent}- ${rule}`));
+  return lines.join('\n');
 }
 
 function prepareRuntimeConfig(paths, corePort) {
-  const text = patchConfigForRuntime(readText(paths.activeConfigFile), corePort);
+  const settings = readJson(paths.settingsFile, {});
+  const text = ensureDirectRules(patchConfigForRuntime(readText(paths.activeConfigFile), corePort), settings);
   ensureDir(paths.runtimeDir);
   fs.writeFileSync(paths.runtimeConfigFile, text);
   copyIfMissing(path.join(paths.configDir, 'Country.mmdb'), path.join(paths.runtimeDir, 'Country.mmdb'));
@@ -1515,7 +1665,7 @@ async function startServer(paths, args) {
       appendLog(paths, `[${new Date().toISOString()}] core exited code=${code} signal=${signal}\n`);
       child = null;
     });
-    coreReady = await waitForCore(corePort, 4000);
+    coreReady = await waitForCore(corePort, CORE_START_TIMEOUT_MS);
   }
 
   const server = http.createServer((request, response) => {
@@ -1541,7 +1691,7 @@ async function startServer(paths, args) {
     server.listen(port, '127.0.0.1', resolve);
   });
 
-  console.log(`xiongmao vpn service listening on http://127.0.0.1:${port}`);
+  console.log(`SilverVPN service listening on http://127.0.0.1:${port}`);
   console.log(`mode=${coreReady ? 'core' : 'demo'} config=${paths.activeConfigFile}`);
 
   const stop = () => {
@@ -1808,6 +1958,7 @@ async function main() {
 
 Environment:
   CLASH_CORE=/absolute/path/to/mihomo
+  SILVERVPN_DATA_DIR=~/.config/SilverVPN
   XIONGMAO_API_BASE=https://...
   XIONGMAO_USERNAME=...
   XIONGMAO_PASSWORD=...`);
