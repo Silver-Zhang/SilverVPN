@@ -1,10 +1,17 @@
 # SilverVPN
 
-SilverVPN is a Linux desktop proxy client built around a Linux `mihomo`/Clash-compatible core. It provides an Electron GUI, a CLI, local HTTP/SOCKS proxy ports, GNOME system-proxy integration, profile management, node switching, delay tests, outbound IP checks, and account/subscription import flows.
+SilverVPN is a Linux desktop client for mihomo-compatible subscriptions. It provides account and subscription profiles, node selection, smart/global/direct routing, GNOME and terminal proxy integration, optional TUN routing, diagnostics, and intranet bypass rules.
 
-## One-Command Install
+## Install
 
-On a new Linux desktop host:
+Ubuntu/Debian prerequisites:
+
+```bash
+sudo apt update
+sudo apt install -y git curl gzip nodejs npm libcap2-bin
+```
+
+Clone and install:
 
 ```bash
 git clone https://github.com/Silver-Zhang/SilverVPN.git
@@ -12,131 +19,137 @@ cd SilverVPN
 ./scripts/install.sh
 ```
 
-The installer is user-local and does not use `sudo`. It will:
+The normal installer does not use `sudo`. It creates:
 
-- run `npm install`
-- download and install a Linux `mihomo` core into `resources/clash-binaries/`
-- create the launcher `~/.local/bin/silvervpn`
-- create `silvervpn-run`, `silvervpn-code`, and `silvervpn-claude` proxy-aware launchers
-- create the application-menu entry `~/.local/share/applications/silvervpn.desktop`
-- copy the desktop icon as `SilverVPN.desktop` when a desktop folder exists
+- `~/.local/bin/silvervpn`
+- `~/.local/share/applications/silvervpn.desktop`
+- `~/Desktop/SilverVPN.desktop` or the localized desktop equivalent
+- `~/.config/SilverVPN/shell-hook.sh`
 
-Only `SilverVPN` is added to the application menu. The proxy-aware command wrappers remain terminal commands, so they cannot be confused with the SilverVPN desktop window.
+It removes obsolete `silvervpn-run`, `silvervpn-code`, and `silvervpn-claude` launchers. There is only one application entry: `SilverVPN`.
 
-Start it from the app menu by searching `SilverVPN`, or run:
+Launch it from the application menu, the desktop icon, or:
 
 ```bash
-silvervpn
+~/.local/bin/silvervpn
 ```
 
-If the downloaded core cannot be fetched from GitHub, retry with a proxy:
+The launcher directly executes the installed Electron binary, so it does not depend on the graphical desktop inheriting an nvm or shell-specific `PATH`.
+
+## Desktop Icon Troubleshooting
+
+If clicking the icon does nothing:
 
 ```bash
-HTTPS_PROXY=http://127.0.0.1:4780 ./scripts/install.sh
+cat ~/.local/state/SilverVPN/launcher.log
+gtk-launch silvervpn
 ```
 
-## Update After `git pull`
-
-From an existing clone:
+Recreate the launcher:
 
 ```bash
-cd SilverVPN
+cd ~/SilverVPN
+./scripts/install.sh
+```
+
+On GNOME, a copied `.desktop` file may require right-clicking it and choosing **Allow Launching**. The installer also marks it trusted through `gio` when supported.
+
+## Update
+
+```bash
+cd ~/SilverVPN
 ./scripts/update.sh
 ```
 
-`update.sh` runs `git pull --ff-only` when the directory is a Git repository, then re-runs the same idempotent desktop installer. If you already pulled manually, run:
+If the repository was already pulled:
 
 ```bash
 ./scripts/install.sh
 ```
 
-## Daily Use
+## Routing Options
 
-The GUI supports two profile sources:
+### System And Terminal Proxy
 
-- Account profile: log in with a SilverVPN-compatible account API and refresh `pc_sub` nodes.
-- Custom subscription profile: import a subscription URL, `sub://...`, `.url`, or Clash YAML file.
+This mode starts the normal user-owned mihomo core and configures:
 
-Each import is kept as a separate profile. Select the profile in the `Profiles` panel, then choose a node from that profile's node list.
+- HTTP proxy: `127.0.0.1:4780`
+- SOCKS5 proxy: `127.0.0.1:4781`
+- GNOME system proxy
+- Bash/Zsh proxy environment synchronization
 
-The application opens disconnected. Starting the GUI does not start the core or enable proxying. Enabling `System and terminal proxy` starts the core, configures GNOME, and automatically synchronizes HTTP/SOCKS proxy variables into Bash and Zsh prompts. Processes that were already running must be restarted.
+New terminal processes inherit the proxy automatically. Existing applications must be restarted because Linux cannot change the environment of an already running process.
 
-## Account Base URL
+### TUN Mode
 
-The account flow expects a backend API root that supports:
+TUN routes applications that do not support HTTP/SOCKS settings. It is off by default and requires a one-time privileged installation:
 
-- `POST {base}/v1/login`
-- `GET {base}/v1/userinfo`
-
-If you only use subscription URLs, you do not need a base URL. If you want account login and automatic account subscription refresh, fill the official API base URL supplied by the service provider. This repository does not hard-code a private service domain.
-
-## Bypass / Direct Rules
-
-The GUI has a `Direct bypass` panel. Add one host or CIDR per line, for example:
-
-```text
-gitlab.example.org
-*.example.org
-192.168.0.0/16
+```bash
+./scripts/install-tun.sh
 ```
 
-SilverVPN always includes common local and private ranges by default, including `localhost`, `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, and `192.168.0.0/16`. These entries are applied both to GNOME system-proxy ignore hosts and to the runtime Clash rules, so intranet sites can stay direct while ChatGPT/Google use the selected proxy node.
+The script:
+
+- downloads a pinned official mihomo release
+- verifies its SHA256 digest
+- installs it root-owned at `/usr/local/libexec/silvervpn/mihomo`
+- grants only `CAP_NET_ADMIN`
+- records privileged commands in `logs/privileged-commands.log`
+
+TUN uses the dedicated interface `silvervpn0`, route table `20229`, and rule range starting at `19000`. SilverVPN verifies that these artifacts disappear when TUN stops.
+
+SilverVPN refuses to enable TUN when ExpressVPN, iNode, OpenVPN, WireGuard, another tunnel interface, or conflicting policy routing is active. It never flushes another VPN's routes.
+
+The TUN panel provides:
+
+- **Recheck**: refresh conflict detection without changing the network.
+- **Restore network**: stop SilverVPN-owned proxy/TUN state and verify that `silvervpn0`, table `20229`, and SilverVPN rules are gone.
+
+It deliberately does not offer “remove other VPN policies”; deleting unknown routes cannot be made safe.
 
 ## Modes
 
+- **Smart / Rule**: private networks and China traffic direct; foreign traffic through the selected node.
+- **Global**: traffic handled by SilverVPN uses the selected node.
+- **Direct**: traffic handled by SilverVPN goes direct.
+
+CLI equivalents:
+
 ```bash
-node cli.js mode rule    # smart mode: bypass/default direct rules + CN direct, others proxy
-node cli.js mode global  # all proxy-entered traffic uses the proxy group
-node cli.js mode direct  # all proxy-entered traffic goes direct
+node cli.js mode rule
+node cli.js mode global
+node cli.js mode direct
 ```
 
-The Linux client currently provides HTTP/SOCKS proxy mode:
+## Profiles
 
-- HTTP/HTTPS proxy: `127.0.0.1:4780`
-- SOCKS5 proxy: `127.0.0.1:4781`
-- control API: `127.0.0.1:4788`
+SilverVPN supports:
 
-It is not a WireGuard client and does not enable a TUN device yet. Browser traffic uses the proxy when GNOME system proxy is enabled; command-line tools can use `http_proxy` / `https_proxy` / `all_proxy`.
+- account login and `pc_sub` refresh
+- subscription URL
+- `sub://...`
+- `.url`, YAML, or text subscription files
 
-## Claude Code And VS Code
+Each source is stored as a separate profile with its own node list.
 
-Claude Code requires an HTTP/HTTPS proxy and does not support a SOCKS-only proxy. Start it with:
+## ExpressVPN
 
-```bash
-silvervpn-claude
-```
+Only one system-level tunnel should own routing at a time:
 
-Launch VS Code so its Claude extension host inherits the same proxy:
+1. Disconnect ExpressVPN and disable any active split-tunnel routing.
+2. Confirm the SilverVPN TUN panel reports that preflight passed.
+3. Enable SilverVPN TUN.
+4. Disable SilverVPN TUN and wait for cleanup before reconnecting ExpressVPN.
 
-```bash
-silvervpn-code
-```
+When ExpressVPN must remain active, leave SilverVPN TUN off and use **System and terminal proxy**.
 
-Fully quit an already running VS Code instance before using `silvervpn-code`; an existing extension host keeps its old environment. For any other terminal command:
-
-```bash
-silvervpn-run curl -I https://api.anthropic.com
-```
-
-Claude/Anthropic domains are forced through the `Proxy` group in smart mode. Only localhost, private laboratory networks, and configured intranet domains belong in `NO_PROXY`; do not add `anthropic.com` or `claude.ai`.
-
-## Network Status
-
-The GUI network panel compares the machine's direct public IP with the SilverVPN proxy IP and shows GNOME system proxy ownership, default routes, tunnel interfaces, listening local ports, and other detected VPN processes. This makes route conflicts from ExpressVPN, iNode, OpenVPN, or similar software visible.
-
-## ExpressVPN Compatibility
-
-SilverVPN does not install a TUN interface or change the system routing table. This is intentional: when ExpressVPN is active, a second system-wide TUN client cannot guarantee that it will leave ExpressVPN's routes, DNS, kill switch, and tunnel behavior unchanged.
-
-In this compatibility model, ExpressVPN remains the system VPN. SilverVPN only handles applications that use its local HTTP/SOCKS or GNOME system-proxy entry. Smart rules still classify that traffic as China/private direct and foreign proxy. Whole-machine automatic classification is not enabled while preserving the guarantee that ExpressVPN is unaffected.
-
-## Useful CLI
+## Validation
 
 ```bash
+npm run check
+npm run verify
 node cli.js doctor
 node cli.js status
-node cli.js import 'https://example.com/subscription'
-node cli.js serve --port 4788
 ```
 
-The CLI accepts `SILVERVPN_DATA_DIR` for a custom data directory and still accepts legacy `XIONGMAO_*` account environment variables for compatibility.
+See [INSTALL_USAGE_GUIDE.md](INSTALL_USAGE_GUIDE.md) for the complete Chinese installation and usage guide.

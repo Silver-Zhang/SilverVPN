@@ -17,6 +17,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const crypto = require('crypto');
+const yaml = require('js-yaml');
 const { URL } = require('url');
 
 const APP_NAME = 'SilverVPN';
@@ -28,6 +29,10 @@ const HTTP_PROXY_PORT = 4780;
 const SOCKS_PROXY_PORT = 4781;
 const DEFAULT_DELAY_TEST_URL = 'https://www.gstatic.com/generate_204';
 const CORE_START_TIMEOUT_MS = 20000;
+const TUN_DEVICE = 'silvervpn0';
+const TUN_CORE_PATH = '/usr/local/libexec/silvervpn/mihomo';
+const TUN_ROUTE_TABLE = 20229;
+const TUN_RULE_INDEX = 19000;
 const LOCAL_API_KEY = 'RocketMaker';
 const MODE_ALIASES = {
   rule: 'Rule',
@@ -82,6 +87,7 @@ let shutdownInProgress = false;
 let runtime = null;
 let settings = {
   systemProxy: false,
+  tunEnabled: false,
   startWithSystem: false,
   holdProxy: false,
   language: 'zh-CN',
@@ -90,6 +96,7 @@ let settings = {
   currentProfile: '',
   currentSelector: 'Proxy',
   currentProxy: '',
+  coreApiSecret: '',
   alert: false
 };
 
@@ -265,6 +272,10 @@ function initializeFilesystem() {
     ...settings,
     ...readJson(runtime.settingsFile, {})
   };
+  if (!/^[a-f0-9]{64}$/i.test(String(settings.coreApiSecret || ''))) {
+    settings.coreApiSecret = crypto.randomBytes(32).toString('hex');
+    writeJson(runtime.settingsFile, settings);
+  }
   if (readProfiles().length === 0 && userDataHasRealConfig(runtime.userData)) {
     const cliProfile = readCliSettings().profile || {};
     saveActiveConfigAsProfile(cliProfile.sourceType === 'account-subscription' ? 'account' : 'custom');
@@ -458,13 +469,168 @@ function fallbackProxiesResponse() {
   };
 }
 
-function patchConfigForRuntime(sourceText) {
+function isTunnelInterfaceName(name) {
+  return /^(tun|tap|wg|ppp|tailscale|utun|vpn|ipsec|lightway|inode|silvervpn)/i.test(String(name || ''));
+}
+
+function getPhysicalInterface() {
+  const routeGet = captureSync('ip', ['route', 'get', '1.1.1.1']);
+  const routeDevice = (routeGet.match(/\bdev\s+(\S+)/) || [])[1] || '';
+  if (routeDevice && !isTunnelInterfaceName(routeDevice)) {
+    return routeDevice;
+  }
+
+  const defaults = captureSync('ip', ['-o', 'route', 'show', 'default']);
+  for (const line of defaults.split(/\r?\n/)) {
+    const device = (line.match(/\bdev\s+(\S+)/) || [])[1] || '';
+    if (device && !isTunnelInterfaceName(device)) {
+      return device;
+    }
+  }
+  return '';
+}
+
+function getLabDnsServers() {
+  const values = [];
+  const resolved = captureSync('resolvectl', ['dns']);
+  for (const match of resolved.matchAll(/\b((?:\d{1,3}\.){3}\d{1,3})\b/g)) {
+    values.push(match[1]);
+  }
+  try {
+    const resolvConf = fs.readFileSync('/etc/resolv.conf', 'utf8');
+    for (const match of resolvConf.matchAll(/^\s*nameserver\s+(\S+)/gm)) {
+      values.push(match[1]);
+    }
+  } catch (error) {
+    // resolvectl output is enough when /etc/resolv.conf is unavailable.
+  }
+  return [...new Set(values)].filter(value => !/^127\./.test(value) && value !== '::1');
+}
+
+function normalizeRuntimeDocument(sourceText) {
+  let document;
+  try {
+    document = yaml.load(sourceText);
+  } catch (error) {
+    throw new Error(`配置文件 YAML 无效：${error.message || String(error)}`);
+  }
+  if (!document || typeof document !== 'object' || Array.isArray(document)) {
+    throw new Error('配置文件必须是 YAML 对象。');
+  }
+
+  const legacyKeys = [
+    ['Proxy', 'proxies'],
+    ['Proxy Group', 'proxy-groups'],
+    ['Rule', 'rules']
+  ];
+  for (const [legacy, modern] of legacyKeys) {
+    if (!document[modern] && document[legacy]) {
+      document[modern] = document[legacy];
+    }
+    delete document[legacy];
+  }
+  return document;
+}
+
+function ensureDocumentRules(document) {
+  const existing = Array.isArray(document.rules) ? document.rules.map(rule => String(rule)) : [];
+  const existingSet = new Set(existing);
+  const required = [...ALWAYS_PROXY_RULES, ...getDirectRules()];
+  const rules = [...required.filter(rule => !existingSet.has(rule)), ...existing];
+  if (!rules.some(rule => /^(MATCH|FINAL),/i.test(rule))) {
+    rules.push('MATCH,Proxy');
+  }
+  document.rules = rules;
+}
+
+function buildTunRuntimeConfig(sourceText) {
+  const document = normalizeRuntimeDocument(sourceText);
+  const physicalInterface = getPhysicalInterface();
+  if (!physicalInterface) {
+    throw new Error('无法确定物理网络接口，不能安全开启 TUN。');
+  }
+  const labDns = getLabDnsServers();
+  const directDns = labDns.length ? labDns : ['223.5.5.5', '119.29.29.29'];
+
+  document.port = HTTP_PROXY_PORT;
+  document['socks-port'] = SOCKS_PROXY_PORT;
+  document['allow-lan'] = false;
+  document['bind-address'] = CONTROL_HOST;
+  document['external-controller'] = `${CONTROL_HOST}:${CORE_CONTROL_PORT}`;
+  document.secret = settings.coreApiSecret;
+  document['interface-name'] = physicalInterface;
+  document['find-process-mode'] = 'off';
+  document.ipv6 = false;
+  document.tun = {
+    enable: true,
+    device: TUN_DEVICE,
+    stack: 'mixed',
+    'auto-route': true,
+    'auto-redirect': false,
+    'auto-detect-interface': false,
+    'strict-route': true,
+    'dns-hijack': ['any:53', 'tcp://any:53'],
+    'route-exclude-address': [
+      '127.0.0.0/8',
+      '10.0.0.0/8',
+      '100.64.0.0/10',
+      '169.254.0.0/16',
+      '172.16.0.0/12',
+      '192.168.0.0/16',
+      '224.0.0.0/4',
+      '::1/128',
+      'fc00::/7',
+      'fe80::/10'
+    ],
+    'iproute2-table-index': TUN_ROUTE_TABLE,
+    'iproute2-rule-index': TUN_RULE_INDEX
+  };
+  document.dns = {
+    ...(document.dns && typeof document.dns === 'object' ? document.dns : {}),
+    enable: true,
+    listen: '0.0.0.0:1053',
+    ipv6: false,
+    'enhanced-mode': 'fake-ip',
+    'fake-ip-range': '198.18.0.1/16',
+    'fake-ip-filter': [
+      'localhost',
+      '*.local',
+      '*.lan',
+      'gitlab.reallab.org.cn',
+      '*.reallab.org.cn'
+    ],
+    'default-nameserver': ['223.5.5.5', '119.29.29.29'],
+    nameserver: ['https://dns.alidns.com/dns-query', 'https://doh.pub/dns-query'],
+    fallback: ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
+    'direct-nameserver': directDns,
+    'direct-nameserver-follow-policy': true,
+    'nameserver-policy': {
+      '+.reallab.org.cn': directDns,
+      '+.local': directDns
+    }
+  };
+  ensureDocumentRules(document);
+
+  return yaml.dump(document, {
+    noRefs: true,
+    sortKeys: false,
+    lineWidth: -1,
+    quotingType: '"'
+  });
+}
+
+function patchConfigForRuntime(sourceText, options = {}) {
+  if (options.tunEnabled) {
+    return buildTunRuntimeConfig(sourceText);
+  }
   let text = sourceText;
   const replacements = {
     port: HTTP_PROXY_PORT,
     'socks-port': SOCKS_PROXY_PORT,
     'external-controller': `${CONTROL_HOST}:${CORE_CONTROL_PORT}`,
-    secret: '""'
+    secret: JSON.stringify(settings.coreApiSecret),
+    'allow-lan': 'false',
+    'bind-address': CONTROL_HOST
   };
 
   for (const [key, value] of Object.entries(replacements)) {
@@ -511,9 +677,9 @@ function ensureDirectRules(sourceText) {
   return lines.join('\n');
 }
 
-function prepareRuntimeConfig() {
+function prepareRuntimeConfig(options = {}) {
   const source = readActiveConfigText();
-  const patched = patchConfigForRuntime(source);
+  const patched = patchConfigForRuntime(source, options);
   ensureDir(runtime.clashRuntimeDir);
   fs.writeFileSync(runtime.runtimeConfigFile, patched);
   copyIfMissing(
@@ -572,6 +738,216 @@ function findCoreBinary() {
   return '';
 }
 
+function getTunCoreInstallation() {
+  if (!fs.existsSync(TUN_CORE_PATH)) {
+    return {
+      available: false,
+      path: TUN_CORE_PATH,
+      message: 'TUN 核心尚未安装，请先运行 ./scripts/install-tun.sh。'
+    };
+  }
+  try {
+    const stat = fs.statSync(TUN_CORE_PATH);
+    const capabilities = captureSync('getcap', [TUN_CORE_PATH]);
+    const rootOwned = stat.uid === 0 && stat.gid === 0;
+    const protectedMode = (stat.mode & 0o022) === 0;
+    const hasCapability = /cap_net_admin[=+].*ep/i.test(capabilities);
+    return {
+      available: rootOwned && protectedMode && hasCapability && executableExists(TUN_CORE_PATH),
+      path: TUN_CORE_PATH,
+      rootOwned,
+      protectedMode,
+      hasCapability,
+      capabilities,
+      message:
+        rootOwned && protectedMode && hasCapability
+          ? 'TUN 核心可用。'
+          : 'TUN 核心权限不安全或不完整，请重新运行 ./scripts/install-tun.sh。'
+    };
+  } catch (error) {
+    return {
+      available: false,
+      path: TUN_CORE_PATH,
+      message: `无法检查 TUN 核心：${error.message || String(error)}`
+    };
+  }
+}
+
+function getTunArtifacts() {
+  const link = captureSync('ip', ['-o', 'link', 'show', 'dev', TUN_DEVICE]);
+  const rules = captureSync('ip', ['-o', 'rule', 'show'])
+    .split(/\r?\n/)
+    .filter(line => line.includes(String(TUN_ROUTE_TABLE)) || line.startsWith(`${TUN_RULE_INDEX}:`));
+  const routes = captureSync('ip', ['route', 'show', 'table', String(TUN_ROUTE_TABLE)])
+    .split(/\r?\n/)
+    .filter(Boolean);
+  return {
+    active: Boolean(link),
+    interface: link,
+    rules,
+    routes
+  };
+}
+
+function getTunConflicts() {
+  const conflicts = [];
+  const expressVpnCtl = '/opt/expressvpn/bin/expressvpnctl';
+  let expressVpnOwnsRouting = false;
+  if (executableExists(expressVpnCtl)) {
+    const connectionState = captureSync(expressVpnCtl, ['get', 'connectionstate']);
+    const splitTunnel = captureSync(expressVpnCtl, ['get', 'splittunnel']);
+    if (connectionState && !/^Disconnected$/i.test(connectionState)) {
+      conflicts.push(`ExpressVPN 当前状态为 ${connectionState}，请先断开。`);
+      expressVpnOwnsRouting = true;
+    }
+    if (/^true$/i.test(splitTunnel)) {
+      conflicts.push('ExpressVPN Split Tunnel 仍处于开启状态，请在 ExpressVPN 设置中关闭拆分隧道。');
+      expressVpnOwnsRouting = true;
+    }
+  }
+
+  const links = captureSync('ip', ['-o', 'link', 'show', 'up']);
+  const foreignTunnels = links
+    .split(/\r?\n/)
+    .map(line => (line.match(/^\d+:\s+([^:@\s]+)/) || [])[1] || '')
+    .filter(name => name && name !== TUN_DEVICE && isTunnelInterfaceName(name));
+  if (foreignTunnels.length) {
+    conflicts.push(`检测到其他活动隧道网卡：${[...new Set(foreignTunnels)].join(', ')}`);
+  }
+
+  const defaultRoutes = captureSync('ip', ['-o', 'route', 'show', 'default']);
+  const tunnelDefaults = defaultRoutes
+    .split(/\r?\n/)
+    .filter(line => {
+      const device = (line.match(/\bdev\s+(\S+)/) || [])[1] || '';
+      return device && device !== TUN_DEVICE && isTunnelInterfaceName(device);
+    });
+  if (tunnelDefaults.length) {
+    conflicts.push('默认路由正在由其他 VPN 隧道接管。');
+  }
+
+  const policyRules = captureSync('ip', ['-o', 'rule', 'show'])
+    .split(/\r?\n/)
+    .filter(
+      line =>
+        line &&
+        !line.startsWith(`${TUN_RULE_INDEX}:`) &&
+        /(evpn|expressvpn|wireguard|wg|openvpn|ipsec|tailscale|vpnrt|vpnfw)/i.test(line)
+    )
+    .filter(line => {
+      const table = (line.match(/\blookup\s+(\S+)/) || [])[1] || '';
+      return !table || Boolean(captureSync('ip', ['route', 'show', 'table', table]));
+    });
+  if (policyRules.length && !expressVpnOwnsRouting) {
+    conflicts.push('检测到其他 VPN 的策略路由规则。');
+  }
+
+  const processOutput = captureSync('ps', ['-eo', 'comm=,args=']);
+  const blockingProcesses = processOutput
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => {
+      const command = (line.match(/^(\S+)/) || [])[1] || '';
+      const executable = (line.match(/^\S+\s+(\S+)/) || [])[1] || '';
+      const name = path.basename(executable || command);
+      return /^(expressvpn-(?:client|lightway)(?:-rs)?|openvpn|wg-quick|wireguard-go|tailscaled|strongswan|charon|pppd|inode.*(?:vpn|client))$/i.test(
+        name
+      );
+    })
+    .slice(0, 8);
+  if (blockingProcesses.length) {
+    conflicts.push('检测到正在工作的其他 VPN 客户端。');
+  }
+
+  return conflicts;
+}
+
+function getTunStatus() {
+  const installation = getTunCoreInstallation();
+  const artifacts = getTunArtifacts();
+  const conflicts = getTunConflicts();
+  const residual = artifacts.active && !settings.tunEnabled;
+  return {
+    ...installation,
+    active: artifacts.active && settings.tunEnabled && coreIsRunning(),
+    requested: Boolean(settings.tunEnabled),
+    conflicts,
+    artifacts,
+    residual,
+    message: residual
+      ? '检测到 SilverVPN TUN 残留，请不要启动其他 VPN，并查看核心日志。'
+      : conflicts.length
+        ? conflicts.join(' ')
+        : installation.message
+  };
+}
+
+async function waitForTunArtifacts(expectedActive, timeoutMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const artifacts = getTunArtifacts();
+    const clean = !artifacts.active && artifacts.rules.length === 0 && artifacts.routes.length === 0;
+    if ((expectedActive && artifacts.active) || (!expectedActive && clean)) {
+      return artifacts;
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  return getTunArtifacts();
+}
+
+function stopOrphanedSilverVpnTunProcesses() {
+  const processList = captureSync('ps', ['-eo', 'pid=,uid=,args=']);
+  const currentUid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const pids = processList
+    .split(/\r?\n/)
+    .map(line => {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+      return match ? { pid: Number(match[1]), uid: Number(match[2]), args: match[3] } : null;
+    })
+    .filter(Boolean)
+    .filter(item => currentUid === null || item.uid === currentUid)
+    .filter(item => item.args === TUN_CORE_PATH || item.args.startsWith(`${TUN_CORE_PATH} `))
+    .map(item => item.pid);
+
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (error) {
+      if (error.code !== 'ESRCH') {
+        throw error;
+      }
+    }
+  }
+  return pids;
+}
+
+async function restoreDefaultNetwork() {
+  await stopCoreAndWait(8000);
+  const orphanedPids = stopOrphanedSilverVpnTunProcesses();
+  settings.tunEnabled = false;
+  settings.systemProxy = false;
+  saveSettings();
+
+  if (getGnomeProxyStatus().ownedBySilverVPN) {
+    await setGnomeProxy(false);
+  }
+  writeShellProxyState(false);
+
+  const artifacts = await waitForTunArtifacts(false, 10000);
+  if (artifacts.active || artifacts.rules.length || artifacts.routes.length) {
+    throw new Error(
+      'SilverVPN 自有 TUN 状态仍未完全清理。为避免影响其他 VPN，程序没有删除任何外部策略；请查看核心日志后重启系统。'
+    );
+  }
+
+  return {
+    ok: true,
+    stoppedOrphanedPids: orphanedPids,
+    message: 'SilverVPN 默认网络已恢复，未修改其他 VPN 的接口或策略。',
+    dashboard: await buildDashboard()
+  };
+}
+
 function appendCoreLog(chunk) {
   const file = path.join(runtime.logsDir, 'core.log');
   fs.appendFile(file, chunk, () => {});
@@ -590,6 +966,7 @@ function requestCore(pathname, options = {}) {
         method,
         headers: {
           'Content-Type': 'application/json',
+          Authorization: `Bearer ${settings.coreApiSecret}`,
           ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {})
         }
       },
@@ -634,27 +1011,54 @@ async function startCore() {
     return true;
   }
 
-  corePath = findCoreBinary();
+  const tunMode = Boolean(settings.tunEnabled);
+  if (tunMode) {
+    const tunStatus = getTunStatus();
+    if (!tunStatus.available) {
+      throw new Error(tunStatus.message);
+    }
+    if (tunStatus.conflicts.length) {
+      throw new Error(`无法开启 TUN：${tunStatus.conflicts.join(' ')}`);
+    }
+  }
+
+  corePath = tunMode ? TUN_CORE_PATH : findCoreBinary();
   if (!corePath) {
     appendCoreLog(`[${new Date().toISOString()}] No Linux Clash/mihomo core found.\n`);
     return false;
   }
 
-  const coreConfigDir = prepareRuntimeConfig();
-  coreProcess = spawn(corePath, ['-d', coreConfigDir], {
+  const coreConfigDir = prepareRuntimeConfig({ tunEnabled: tunMode });
+  const watchdog = path.join(__dirname, 'scripts', 'core-watchdog.sh');
+  const command = tunMode ? 'bash' : corePath;
+  const args = tunMode
+    ? [watchdog, String(process.pid), corePath, '-d', coreConfigDir]
+    : ['-d', coreConfigDir];
+  const child = spawn(command, args, {
     cwd: coreConfigDir,
     stdio: ['ignore', 'pipe', 'pipe']
   });
-  coreProcess.stdout.on('data', appendCoreLog);
-  coreProcess.stderr.on('data', appendCoreLog);
-  coreProcess.on('exit', (code, signal) => {
+  coreProcess = child;
+  child.stdout.on('data', appendCoreLog);
+  child.stderr.on('data', appendCoreLog);
+  child.on('exit', (code, signal) => {
     appendCoreLog(`[${new Date().toISOString()}] core exited code=${code} signal=${signal}\n`);
-    coreProcess = null;
+    if (coreProcess === child) {
+      coreProcess = null;
+    }
   });
 
   const ready = await waitForCore(CORE_START_TIMEOUT_MS);
   if (!ready) {
+    await stopCoreAndWait();
     return false;
+  }
+  if (tunMode) {
+    const artifacts = await waitForTunArtifacts(true);
+    if (!artifacts.active) {
+      await stopCoreAndWait();
+      return false;
+    }
   }
   await restoreCoreSelection();
   return true;
@@ -885,6 +1289,9 @@ async function setSystemProxy(enabled) {
     return;
   }
 
+  if (enabled && settings.tunEnabled) {
+    throw new Error('TUN 模式已经接管流量，不需要同时开启系统与终端代理。');
+  }
   if (enabled) {
     const coreStarted = await startCore();
     if (!coreStarted) {
@@ -895,6 +1302,51 @@ async function setSystemProxy(enabled) {
   writeShellProxyState(enabled);
   settings.systemProxy = enabled;
   saveSettings();
+}
+
+async function setTunMode(enabled) {
+  if (process.platform !== 'linux') {
+    throw new Error('TUN 模式仅支持 Linux。');
+  }
+
+  if (enabled) {
+    const status = getTunStatus();
+    if (!status.available) {
+      throw new Error(status.message);
+    }
+    if (status.residual) {
+      throw new Error(status.message);
+    }
+    if (status.conflicts.length) {
+      throw new Error(`无法开启 TUN：${status.conflicts.join(' ')}`);
+    }
+
+    if (settings.systemProxy || getGnomeProxyStatus().ownedBySilverVPN) {
+      await setGnomeProxy(false);
+    }
+    writeShellProxyState(false);
+    settings.systemProxy = false;
+    await stopCoreAndWait(8000);
+    settings.tunEnabled = true;
+    saveSettings();
+
+    try {
+      const started = await startCore();
+      if (!started) {
+        throw new Error('TUN 核心启动失败，请查看核心日志。');
+      }
+    } catch (error) {
+      await stopCoreAndWait(8000);
+      settings.tunEnabled = false;
+      saveSettings();
+      await waitForTunArtifacts(false, 8000);
+      throw error;
+    }
+    return buildDashboard();
+  }
+
+  const restored = await restoreDefaultNetwork();
+  return restored.dashboard;
 }
 
 async function setProxyMode(value) {
@@ -1347,6 +1799,20 @@ async function handleLocalApi(request, response, pathname) {
 }
 
 function proxyToCore(request, response) {
+  const parsed = new URL(request.url, `http://${CONTROL_HOST}:${PUBLIC_CONTROL_PORT}`);
+  const allowed =
+    (request.method === 'GET' &&
+      ['/configs', '/proxies', '/connections', '/traffic', '/logs'].some(
+        pathname => parsed.pathname === pathname || parsed.pathname.startsWith(`${pathname}/`)
+      )) ||
+    (request.method === 'PATCH' && parsed.pathname === '/configs') ||
+    (request.method === 'PUT' && parsed.pathname.startsWith('/proxies/')) ||
+    (request.method === 'DELETE' && parsed.pathname === '/connections');
+  if (!allowed) {
+    sendJson(response, 403, { message: 'Core API operation is not allowed.' });
+    return;
+  }
+
   const options = {
     hostname: CONTROL_HOST,
     port: CORE_CONTROL_PORT,
@@ -1354,7 +1820,8 @@ function proxyToCore(request, response) {
     method: request.method,
     headers: {
       ...request.headers,
-      host: `${CONTROL_HOST}:${CORE_CONTROL_PORT}`
+      host: `${CONTROL_HOST}:${CORE_CONTROL_PORT}`,
+      authorization: `Bearer ${settings.coreApiSecret}`
     }
   };
 
@@ -1394,6 +1861,15 @@ function proxyToCore(request, response) {
 
 async function handleCompatRequest(request, response) {
   const parsed = new URL(request.url, `http://${CONTROL_HOST}:${PUBLIC_CONTROL_PORT}`);
+  const origin = String(request.headers.origin || '');
+  const originAllowed =
+    !origin ||
+    origin === 'null' ||
+    /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(origin);
+  if (!originAllowed) {
+    sendJson(response, 403, { message: 'Origin is not allowed.' });
+    return;
+  }
 
   if (request.method === 'OPTIONS') {
     sendText(response, 204, '');
@@ -1554,6 +2030,7 @@ async function buildDashboard() {
   const rows = buildProxyRows(proxiesResponse, selectorName);
   const account = buildAccountSummary();
   const profiles = readProfiles();
+  const tun = getTunStatus();
 
   return {
     appName: APP_NAME,
@@ -1574,6 +2051,7 @@ async function buildDashboard() {
     },
     settings: {
       systemProxy: Boolean(settings.systemProxy),
+      tunEnabled: Boolean(settings.tunEnabled),
       startWithSystem: Boolean(settings.startWithSystem),
       holdProxy: Boolean(settings.holdProxy),
       language: settings.language || 'zh-CN',
@@ -1592,7 +2070,8 @@ async function buildDashboard() {
       current: selector.now || settings.currentProxy || '',
       rows,
       count: rows.length
-    }
+    },
+    tun
   };
 }
 
@@ -1891,7 +2370,7 @@ function getInterfaceSummary() {
       return {
         name,
         addresses: usable.map(address => address.address),
-        tunnel: /^(tun|tap|wg|ppp|tailscale|utun|vpn|ipsec|lightway|inode)/i.test(name)
+        tunnel: isTunnelInterfaceName(name)
       };
     })
     .filter(item => item.addresses.length > 0);
@@ -1936,7 +2415,9 @@ async function getNetworkStatusFromGui() {
     NO_PROXY: process.env.NO_PROXY || process.env.no_proxy || ''
   };
   const tunnelInterfaces = interfaces.filter(item => item.tunnel);
+  const foreignTunnelInterfaces = tunnelInterfaces.filter(item => item.name !== TUN_DEVICE);
   const vpnProcesses = getVpnProcesses();
+  const tun = getTunStatus();
 
   return {
     checkedAt: new Date().toISOString(),
@@ -1945,6 +2426,8 @@ async function getNetworkStatusFromGui() {
       mode: normalizeStoredMode((await readCoreConfigs()).mode),
       selector: settings.currentSelector || 'Proxy',
       node: settings.currentProxy || '',
+      tunEnabled: Boolean(settings.tunEnabled),
+      tunActive: tun.active,
       httpProxy: `${CONTROL_HOST}:${HTTP_PROXY_PORT}`,
       socksProxy: `${CONTROL_HOST}:${SOCKS_PROXY_PORT}`
     },
@@ -1959,9 +2442,12 @@ async function getNetworkStatusFromGui() {
     interfaces,
     tunnelInterfaces,
     vpnProcesses,
+    tun,
     listeningPorts: getListeningProxyPorts(),
     conflicts: [
-      ...(tunnelInterfaces.length ? [`检测到隧道网卡：${tunnelInterfaces.map(item => item.name).join(', ')}`] : []),
+      ...(foreignTunnelInterfaces.length
+        ? [`检测到其他隧道网卡：${foreignTunnelInterfaces.map(item => item.name).join(', ')}`]
+        : []),
       ...(vpnProcesses.some(line => !/(mihomo|clash)/i.test(line)) ? ['检测到其他 VPN 进程，默认路由可能由其他软件控制。'] : []),
       ...(gnomeProxy.mode === 'manual' && !gnomeProxy.ownedBySilverVPN ? ['系统代理已启用，但不是 SilverVPN 的本地端口。'] : [])
     ]
@@ -2010,7 +2496,10 @@ async function handleGuiAction(action, payload = {}) {
       await startCore();
       return buildDashboard();
     case 'stop-core':
-      stopCore();
+      if (settings.tunEnabled) {
+        return setTunMode(false);
+      }
+      await stopCoreAndWait();
       return buildDashboard();
     case 'restart-core':
       await restartCore();
@@ -2018,6 +2507,10 @@ async function handleGuiAction(action, payload = {}) {
     case 'set-system-proxy':
       await setSystemProxy(Boolean(payload.enabled));
       return buildDashboard();
+    case 'set-tun-mode':
+      return setTunMode(Boolean(payload.enabled));
+    case 'restore-default-network':
+      return restoreDefaultNetwork();
     case 'set-mode':
       await setProxyMode(payload.mode);
       return buildDashboard();
@@ -2291,6 +2784,7 @@ async function bootstrap() {
   app.setName(APP_NAME);
   initializeFilesystem();
   settings.systemProxy = false;
+  settings.tunEnabled = false;
   writeShellProxyState(false);
   settings.currentSelector = normalizeStoredMode(readConfigSummary().mode) === 'Global' ? 'GLOBAL' : 'Proxy';
   saveSettings();
@@ -2320,6 +2814,19 @@ app.on('activate', () => {
 
 app.on('before-quit', event => {
   isQuitting = true;
+  if (!shutdownInProgress && settings.tunEnabled) {
+    event.preventDefault();
+    shutdownInProgress = true;
+    setTunMode(false)
+      .catch(error => {
+        appendCoreLog(`[${new Date().toISOString()}] failed to stop TUN cleanly: ${error.message}\n`);
+      })
+      .finally(() => {
+        stopCompatServer();
+        app.quit();
+      });
+    return;
+  }
   if (!shutdownInProgress && !settings.holdProxy && settings.systemProxy) {
     event.preventDefault();
     shutdownInProgress = true;

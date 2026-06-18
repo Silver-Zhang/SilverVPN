@@ -14,6 +14,9 @@
     delays: new Map(),
     filter: '',
     language: 'zh-CN',
+    tunRequestPending: false,
+    tunPendingEnabled: false,
+    tunError: '',
     toastTimer: null
   };
 
@@ -35,6 +38,23 @@
       logsOpened: '已打开日志目录',
       systemProxyOn: '系统与终端代理已启用；已有程序需重启',
       systemProxyOff: '系统与终端代理已关闭',
+      tunEnabled: 'TUN 模式已启用',
+      tunDisabled: 'TUN 模式已关闭',
+      tunEnabling: '正在启用',
+      tunDisabling: '正在关闭',
+      tunActive: '运行中',
+      tunReady: '预检通过',
+      tunUnavailable: '不可用',
+      tunConflict: '存在冲突',
+      tunWaiting: '等待启动',
+      tunUnchecked: '尚未预检',
+      tunDefaultMessage: 'TUN 默认关闭；开启前会检查其他 VPN、隧道网卡和路由冲突。',
+      tunReadyMessage: '预检通过，可以按需启用 TUN 模式。',
+      tunActiveMessage: 'TUN 正在接管需要路由的流量。',
+      tunConflictPrefix: '无法启用 TUN：',
+      tunRefreshed: 'TUN 状态已重新检测',
+      networkRestored: 'SilverVPN 默认网络已恢复',
+      restoreConfirm: '确认停止 SilverVPN 代理和 TUN，并恢复默认网络？不会修改其他 VPN。',
       modeSwitched: '已切换到',
       noDelayNodes: '没有可测试的节点',
       delayDone: '延迟测试完成',
@@ -45,7 +65,6 @@
       bypassSaved: '绕过地址已保存',
       profileSwitched: '配置方案已切换',
       networkRefreshed: '网络状态已刷新',
-      proxyCommandCopied: '终端代理命令已复制',
       detectingIp: 'Detecting outbound IP',
       testing: 'Testing',
       accountMissing: '未登录',
@@ -70,6 +89,23 @@
       logsOpened: 'Logs opened',
       systemProxyOn: 'System and terminal proxy enabled; restart existing apps',
       systemProxyOff: 'System and terminal proxy disabled',
+      tunEnabled: 'TUN mode enabled',
+      tunDisabled: 'TUN mode disabled',
+      tunEnabling: 'Enabling',
+      tunDisabling: 'Disabling',
+      tunActive: 'Active',
+      tunReady: 'Preflight passed',
+      tunUnavailable: 'Unavailable',
+      tunConflict: 'Conflict detected',
+      tunWaiting: 'Waiting to start',
+      tunUnchecked: 'Not checked',
+      tunDefaultMessage: 'TUN is off by default. Other VPNs, tunnel interfaces, and route conflicts are checked before enabling it.',
+      tunReadyMessage: 'Preflight passed. TUN mode can be enabled when needed.',
+      tunActiveMessage: 'TUN is routing traffic that requires system-level interception.',
+      tunConflictPrefix: 'Unable to enable TUN: ',
+      tunRefreshed: 'TUN status refreshed',
+      networkRestored: 'SilverVPN default network restored',
+      restoreConfirm: 'Stop SilverVPN proxy and TUN and restore the default network? Other VPNs will not be modified.',
       modeSwitched: 'Switched to ',
       noDelayNodes: 'No nodes to test',
       delayDone: 'Delay test complete',
@@ -80,7 +116,6 @@
       bypassSaved: 'Bypass list saved',
       profileSwitched: 'Profile switched',
       networkRefreshed: 'Network status refreshed',
-      proxyCommandCopied: 'Terminal proxy command copied',
       detectingIp: 'Detecting outbound IP',
       testing: 'Testing',
       accountMissing: 'Not signed in',
@@ -135,7 +170,10 @@
       ['.mode-button[data-mode="rule"]', modeText('rule')],
       ['.mode-button[data-mode="global"]', modeText('global')],
       ['.mode-button[data-mode="direct"]', modeText('direct')],
-      ['.switch-row span', english ? 'System proxy' : '系统代理'],
+      ['#systemProxyLabel', english ? 'System and terminal proxy' : '系统与终端代理'],
+      ['#tunModeLabel', english ? 'TUN mode' : 'TUN 模式'],
+      ['#refreshTunStatus', english ? 'Recheck' : '重新检测'],
+      ['#restoreDefaultNetwork', english ? 'Restore network' : '恢复默认网络'],
       ['#accountTitle', english ? 'Account' : '账号'],
       ['#refreshUser', english ? 'Refresh' : '刷新'],
       ['#subscriptionTitle', english ? 'Profiles' : '订阅'],
@@ -151,8 +189,7 @@
       ['#logTitle', english ? 'Core log' : '核心日志'],
       ['#openLogs', english ? 'Open logs' : '打开目录'],
       ['#delayAll', english ? 'Delay test' : '延迟测试'],
-      ['#networkTitle', english ? 'Network status' : '网络状态'],
-      ['#copyProxyEnv', english ? 'Copy terminal / VS Code proxy command' : '复制终端 / VS Code 代理命令']
+      ['#networkTitle', english ? 'Network status' : '网络状态']
     ];
     pairs.forEach(([selector, value]) => setText(selector, value));
     $('#apiBase').placeholder = english ? 'Optional API base URL' : '服务端 URL（可选）';
@@ -164,6 +201,9 @@
     $('#bypassHosts').placeholder = english
       ? 'One host or CIDR per line, for example:\ngitlab.example.org\n*.example.org\n192.168.0.0/16'
       : '每行一个域名或网段，例如：\ngitlab.example.org\n*.example.org\n192.168.0.0/16';
+    if (state.dashboard) {
+      renderTunStatus(state.dashboard.settings || {}, state.dashboard.tun || {});
+    }
   }
 
   function shortPath(value) {
@@ -208,6 +248,72 @@
     if (tone === 'danger') {
       node.classList.add('badge-danger');
     }
+  }
+
+  function normalizeTunConflicts(conflicts) {
+    if (!Array.isArray(conflicts)) {
+      return conflicts ? [String(conflicts)] : [];
+    }
+    return conflicts
+      .map(item => {
+        if (typeof item === 'string') {
+          return item;
+        }
+        if (item && typeof item === 'object') {
+          return item.message || item.reason || item.name || JSON.stringify(item);
+        }
+        return String(item || '');
+      })
+      .filter(Boolean);
+  }
+
+  function renderTunStatus(settings, tun) {
+    const control = $('#tunControl');
+    const input = $('#tunMode');
+    const messageNode = $('#tunMessage');
+    const conflictNode = $('#tunConflicts');
+    if (!control || !input || !messageNode || !conflictNode) {
+      return;
+    }
+
+    const reportedConflicts = normalizeTunConflicts(tun.conflicts);
+    const conflicts = reportedConflicts.length ? reportedConflicts : state.tunError ? [state.tunError] : [];
+    const active = Boolean(tun.active);
+    const enabled = Boolean(settings.tunEnabled);
+    const available = tun.available;
+    const effectiveEnabled = state.tunError ? false : active || (enabled && conflicts.length === 0 && available !== false);
+
+    input.checked = state.tunRequestPending ? state.tunPendingEnabled : effectiveEnabled;
+    input.disabled = state.tunRequestPending || (available === false && !effectiveEnabled);
+    control.classList.toggle('has-conflict', conflicts.length > 0);
+    control.classList.toggle('is-active', active);
+    control.classList.toggle('is-pending', state.tunRequestPending);
+
+    if (state.tunRequestPending) {
+      setBadge('#tunState', state.tunPendingEnabled ? t('tunEnabling') : t('tunDisabling'), 'warn');
+    } else if (conflicts.length) {
+      setBadge('#tunState', t('tunConflict'), 'danger');
+    } else if (active) {
+      setBadge('#tunState', t('tunActive'));
+    } else if (enabled) {
+      setBadge('#tunState', t('tunWaiting'), 'warn');
+    } else if (available === true) {
+      setBadge('#tunState', t('tunReady'));
+    } else if (available === false) {
+      setBadge('#tunState', t('tunUnavailable'), 'warn');
+    } else {
+      setBadge('#tunState', t('tunUnchecked'), 'muted');
+    }
+
+    messageNode.textContent =
+      (state.tunError ? `${t('tunConflictPrefix')}${state.tunError}` : tun.message) ||
+      (active
+        ? t('tunActiveMessage')
+        : available === true
+          ? t('tunReadyMessage')
+          : t('tunDefaultMessage'));
+    conflictNode.hidden = conflicts.length === 0;
+    conflictNode.innerHTML = conflicts.map(item => `<div>${escapeHtml(item)}</div>`).join('');
   }
 
   function toast(message) {
@@ -274,6 +380,7 @@
 
   function renderDashboard(dashboard) {
     state.dashboard = dashboard;
+    state.tunError = '';
     const config = dashboard.config || {};
     const core = dashboard.core || {};
     const settings = dashboard.settings || {};
@@ -302,6 +409,7 @@
     setBadge('#accountState', auth && auth.username ? auth.username : t('accountMissing'), auth && auth.username ? undefined : 'muted');
 
     $('#systemProxy').checked = Boolean(settings.systemProxy);
+    renderTunStatus(settings, dashboard.tun || {});
     $$('.mode-button').forEach(button => {
       button.classList.toggle('active', button.dataset.mode === mode);
     });
@@ -390,12 +498,6 @@
     }
   }
 
-  function terminalProxyCommand() {
-    const proxy = 'http://127.0.0.1:4780';
-    const noProxy = 'localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.reallab.org.cn';
-    return `export HTTP_PROXY=${proxy} HTTPS_PROXY=${proxy} http_proxy=${proxy} https_proxy=${proxy} NO_PROXY=${noProxy} no_proxy=${noProxy}`;
-  }
-
   async function loadDashboard(quiet) {
     try {
       const dashboard = await panda.invoke('dashboard');
@@ -428,6 +530,49 @@
       throw error;
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function setTunMode(enabled) {
+    state.tunError = '';
+    state.tunRequestPending = true;
+    state.tunPendingEnabled = enabled;
+    if (state.dashboard) {
+      renderTunStatus(state.dashboard.settings || {}, state.dashboard.tun || {});
+    }
+    setLoading(true);
+
+    try {
+      const result = await panda.invoke('set-tun-mode', { enabled });
+      const dashboard = result && result.dashboard
+        ? result.dashboard
+        : result && result.appName
+          ? result
+          : await panda.invoke('dashboard');
+      renderDashboard(dashboard);
+
+      const settings = dashboard.settings || {};
+      const tun = dashboard.tun || {};
+      const conflicts = normalizeTunConflicts(tun.conflicts);
+      const accepted = !enabled || Boolean(settings.tunEnabled || tun.active);
+      if (enabled && (conflicts.length || tun.available === false || !accepted)) {
+        const reason = conflicts.join('；') || tun.message || t('tunUnavailable');
+        toast(`${t('tunConflictPrefix')}${reason}`);
+        return;
+      }
+      toast(enabled ? t('tunEnabled') : t('tunDisabled'));
+    } catch (error) {
+      const reason = (error && error.message ? error.message : String(error))
+        .replace(/^Error invoking remote method 'PANDA_GUI': Error:\s*/i, '')
+        .replace(/^无法开启 TUN：\s*/i, '');
+      state.tunError = reason;
+      toast(`${t('tunConflictPrefix')}${reason}`);
+    } finally {
+      state.tunRequestPending = false;
+      setLoading(false);
+      if (state.dashboard) {
+        renderTunStatus(state.dashboard.settings || {}, state.dashboard.tun || {});
+      }
     }
   }
 
@@ -508,9 +653,15 @@
   function bindEvents() {
     $('#refreshDashboard').addEventListener('click', () => loadDashboard(false));
     $('#refreshNetwork').addEventListener('click', () => loadNetworkStatus(true));
-    $('#copyProxyEnv').addEventListener('click', () => {
-      panda.copyText(terminalProxyCommand());
-      toast(t('proxyCommandCopied'));
+    $('#refreshTunStatus').addEventListener('click', async () => {
+      await loadDashboard(true);
+      toast(t('tunRefreshed'));
+    });
+    $('#restoreDefaultNetwork').addEventListener('click', () => {
+      if (!window.confirm(t('restoreConfirm'))) {
+        return;
+      }
+      callAction('restore-default-network', {}, t('networkRestored'));
     });
     $('#startCore').addEventListener('click', () => callAction('start-core', {}, t('startOk')));
     $('#stopCore').addEventListener('click', () => callAction('stop-core', {}, t('stopOk')));
@@ -525,6 +676,9 @@
       callAction('set-system-proxy', { enabled: event.target.checked }, event.target.checked ? t('systemProxyOn') : t('systemProxyOff')).catch(() => {
         event.target.checked = !event.target.checked;
       });
+    });
+    $('#tunMode').addEventListener('change', event => {
+      setTunMode(event.target.checked);
     });
 
     $$('.mode-button').forEach(button => {
@@ -639,12 +793,19 @@
       },
       settings: {
         systemProxy: false,
+        tunEnabled: false,
         language: state.language,
         defaultBypassHosts: ['localhost', '127.0.0.0/8', '192.168.0.0/16'],
         bypassHosts: ['gitlab.example.org'],
         currentProfileId: 'account-preview',
         currentSelector: 'Proxy',
         currentProxy: '香港 01'
+      },
+      tun: {
+        available: true,
+        active: false,
+        conflicts: [],
+        message: '预检通过，可以按需启用 TUN 模式。'
       },
       account: {
         auth: { username: 'preview@example.com', hasCookie: true },
@@ -681,6 +842,20 @@
     }
     if (action === 'set-language') {
       state.dashboard.settings.language = payload.language;
+      return state.dashboard;
+    }
+    if (action === 'set-tun-mode') {
+      const conflicts = normalizeTunConflicts(state.dashboard.tun.conflicts);
+      if (payload.enabled && (state.dashboard.tun.available === false || conflicts.length)) {
+        state.dashboard.settings.tunEnabled = false;
+        state.dashboard.tun.active = false;
+        return state.dashboard;
+      }
+      state.dashboard.settings.tunEnabled = Boolean(payload.enabled);
+      state.dashboard.tun.active = Boolean(payload.enabled);
+      state.dashboard.tun.message = payload.enabled
+        ? 'TUN 正在接管需要路由的流量。'
+        : '预检通过，可以按需启用 TUN 模式。';
       return state.dashboard;
     }
     if (action === 'set-bypass-hosts') {

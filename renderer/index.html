@@ -40,8 +40,23 @@
           </div>
           <label class="switch-row">
             <input id="systemProxy" type="checkbox" />
-            <span>系统与终端代理</span>
+            <span id="systemProxyLabel">系统与终端代理</span>
           </label>
+          <div id="tunControl" class="tun-control">
+            <div class="tun-control-row">
+              <label class="switch-row tun-switch-row">
+                <input id="tunMode" type="checkbox" />
+                <span id="tunModeLabel">TUN 模式</span>
+              </label>
+              <span id="tunState" class="badge badge-muted">正在预检</span>
+            </div>
+            <p id="tunMessage" class="tun-message">TUN 默认关闭，正在等待后端预检。</p>
+            <div id="tunConflicts" class="tun-conflicts" role="alert" hidden></div>
+            <div class="tun-actions">
+              <button id="refreshTunStatus" class="button button-small" type="button">重新检测</button>
+              <button id="restoreDefaultNetwork" class="button button-small" type="button">恢复默认网络</button>
+            </div>
+          </div>
           <label class="field-label" for="languageSelect">Language</label>
           <select id="languageSelect">
             <option value="zh-CN">中文</option>
@@ -153,7 +168,6 @@
               </div>
             </dl>
             <div id="networkWarnings" class="network-warnings" hidden></div>
-            <button id="copyProxyEnv" class="button terminal-button" type="button">复制终端 / VS Code 代理命令</button>
           </div>
         </section>
 

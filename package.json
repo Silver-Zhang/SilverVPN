@@ -18,6 +18,9 @@
     "check": "node --check cli.js && node --check main.js && node --check preload.js && node --check renderer/app.js && node --check scripts/verify.js",
     "pack": "electron-builder --linux AppImage deb"
   },
+  "dependencies": {
+    "js-yaml": "4.1.0"
+  },
   "devDependencies": {
     "electron": "12.2.3",
     "electron-builder": "^22.14.13"
