@@ -58,6 +58,7 @@
       modeSwitched: '已切换到',
       noDelayNodes: '没有可测试的节点',
       delayDone: '延迟测试完成',
+      importing: '正在下载并验证订阅，请稍候…',
       imported: '订阅已导入',
       fileImported: '文件已导入',
       loginDone: '账号已登录，节点已更新',
@@ -109,6 +110,7 @@
       modeSwitched: 'Switched to ',
       noDelayNodes: 'No nodes to test',
       delayDone: 'Delay test complete',
+      importing: 'Downloading and validating subscription…',
       imported: 'Subscription imported',
       fileImported: 'File imported',
       loginDone: 'Logged in and updated',
@@ -729,9 +731,18 @@
     $('#importForm').addEventListener('submit', event => {
       event.preventDefault();
       const source = $('#subscriptionSource').value.trim();
-      callAction('import-source', { source }, t('imported')).then(() => {
-        $('#subscriptionSource').value = '';
-      });
+      const button = $('#importForm button[type="submit"]');
+      const originalText = button.textContent;
+      button.textContent = t('importing');
+      button.disabled = true;
+      callAction('import-source', { source }, t('imported'))
+        .then(() => {
+          $('#subscriptionSource').value = '';
+        })
+        .finally(() => {
+          button.textContent = originalText;
+          button.disabled = false;
+        });
     });
 
     $('#importFile').addEventListener('click', () => callAction('import-file', {}, t('fileImported')));

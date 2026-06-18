@@ -532,13 +532,32 @@ function normalizeRuntimeDocument(sourceText) {
   return document;
 }
 
+function getProxyRuleTarget(document) {
+  const groups = Array.isArray(document['proxy-groups'])
+    ? document['proxy-groups']
+    : Array.isArray(document['Proxy Group'])
+      ? document['Proxy Group']
+      : [];
+  const selectable = groups.filter(group => {
+    const type = String((group && group.type) || '').toLowerCase();
+    return group && group.name && ['select', 'url-test', 'fallback', 'load-balance'].includes(type);
+  });
+  const preferred = selectable.find(group => group.name === 'Proxy') || selectable[0];
+  return preferred ? String(preferred.name) : 'Proxy';
+}
+
+function getProxyRoutingRules(target) {
+  return ALWAYS_PROXY_RULES.map(rule => rule.replace(/,Proxy$/, `,${target}`));
+}
+
 function ensureDocumentRules(document) {
   const existing = Array.isArray(document.rules) ? document.rules.map(rule => String(rule)) : [];
   const existingSet = new Set(existing);
-  const required = [...ALWAYS_PROXY_RULES, ...getDirectRules()];
+  const proxyTarget = getProxyRuleTarget(document);
+  const required = [...getProxyRoutingRules(proxyTarget), ...getDirectRules()];
   const rules = [...required.filter(rule => !existingSet.has(rule)), ...existing];
   if (!rules.some(rule => /^(MATCH|FINAL),/i.test(rule))) {
-    rules.push('MATCH,Proxy');
+    rules.push(`MATCH,${proxyTarget}`);
   }
   document.rules = rules;
 }
@@ -554,6 +573,7 @@ function buildTunRuntimeConfig(sourceText) {
 
   document.port = HTTP_PROXY_PORT;
   document['socks-port'] = SOCKS_PROXY_PORT;
+  delete document['mixed-port'];
   document['allow-lan'] = false;
   document['bind-address'] = CONTROL_HOST;
   document['external-controller'] = `${CONTROL_HOST}:${CORE_CONTROL_PORT}`;
@@ -623,7 +643,7 @@ function patchConfigForRuntime(sourceText, options = {}) {
   if (options.tunEnabled) {
     return buildTunRuntimeConfig(sourceText);
   }
-  let text = sourceText;
+  let text = sourceText.replace(/^mixed-port:.*(?:\r?\n|$)/m, '');
   const replacements = {
     port: HTTP_PROXY_PORT,
     'socks-port': SOCKS_PROXY_PORT,
@@ -644,11 +664,18 @@ function patchConfigForRuntime(sourceText, options = {}) {
 }
 
 function ensureDirectRules(sourceText) {
+  let proxyTarget = 'Proxy';
+  try {
+    proxyTarget = getProxyRuleTarget(normalizeRuntimeDocument(sourceText));
+  } catch (error) {
+    // Preserve the original validation error for mihomo when the YAML is invalid.
+  }
   const lines = sourceText.split(/\r?\n/);
   const rulesIndex = lines.findIndex(line => /^rules:\s*$/.test(line));
+  const proxyRules = getProxyRoutingRules(proxyTarget);
 
   if (rulesIndex === -1) {
-    const rules = [...ALWAYS_PROXY_RULES, ...getDirectRules(), 'MATCH,Proxy'].map(rule => `  - ${rule}`);
+    const rules = [...proxyRules, ...getDirectRules(), `MATCH,${proxyTarget}`].map(rule => `  - ${rule}`);
     return `${sourceText.replace(/\s*$/, '')}\nrules:\n${rules.join('\n')}\n`;
   }
 
@@ -668,7 +695,7 @@ function ensureDirectRules(sourceText) {
       .slice(rulesIndex + 1, endIndex)
       .map(line => line.match(/^(\s*)-\s/))
       .find(Boolean)?.[1] ?? '  ';
-  const missingRules = [...ALWAYS_PROXY_RULES, ...getDirectRules()].filter(rule => !existingRules.has(rule));
+  const missingRules = [...proxyRules, ...getDirectRules()].filter(rule => !existingRules.has(rule));
   if (missingRules.length === 0) {
     return sourceText;
   }
@@ -1075,7 +1102,7 @@ async function restoreCoreSelection() {
   const proxiesResponse = await requestCore('/proxies');
   const proxies = proxiesResponse.proxies || {};
   const mode = normalizeStoredMode((await requestCore('/configs')).mode);
-  const selectorName = mode === 'Global' ? 'GLOBAL' : 'Proxy';
+  const selectorName = pickSelectorName(proxiesResponse, mode);
   const selector = proxies[selectorName] || {};
   const candidates = Array.isArray(selector.all) ? selector.all : [];
   let selected = settings.currentProxy;
@@ -1951,6 +1978,14 @@ function pickSelectorName(proxiesResponse, mode) {
   if (mode !== 'Global' && proxies.Proxy && Array.isArray(proxies.Proxy.all)) {
     return 'Proxy';
   }
+  try {
+    const configured = getProxyRuleTarget(normalizeRuntimeDocument(readActiveConfigText()));
+    if (proxies[configured] && Array.isArray(proxies[configured].all)) {
+      return configured;
+    }
+  } catch (error) {
+    // Fall through to the saved or first available selector.
+  }
   const saved = settings.currentSelector || 'Proxy';
   if (proxies[saved] && Array.isArray(proxies[saved].all)) {
     return saved;
@@ -2129,7 +2164,10 @@ async function importSourceFromGui(source) {
   }
   const result = await runCli(['import', value]);
   saveActiveConfigAsProfile('custom', { source: value });
-  await restartCore();
+  const started = await restartCore();
+  if (!started) {
+    throw new Error('订阅已下载，但代理核心启动失败。请查看核心日志。');
+  }
   return {
     ok: true,
     message: result.stdout.trim(),

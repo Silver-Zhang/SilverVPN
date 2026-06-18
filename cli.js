@@ -1,8 +1,10 @@
 'use strict';
 
 const fs = require('fs');
+const dns = require('dns');
 const http = require('http');
 const https = require('https');
+const yaml = require('js-yaml');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
@@ -1120,7 +1122,7 @@ async function discoverApiBase(settings, args) {
   throw new Error('API base URL is required. Pass --base https://... or set XIONGMAO_API_BASE.');
 }
 
-function downloadTextOnce(sourceUrl, redirects = 0, userAgent = DEFAULT_USER_AGENT, cookie = '') {
+function downloadTextOnce(sourceUrl, redirects = 0, userAgent = DEFAULT_USER_AGENT, cookie = '', network = {}) {
   if (redirects > 5) {
     return Promise.reject(new Error('too many redirects'));
   }
@@ -1129,13 +1131,30 @@ function downloadTextOnce(sourceUrl, redirects = 0, userAgent = DEFAULT_USER_AGE
   const client = parsed.protocol === 'https:' ? https : http;
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let connectTimer = null;
+    const finish = (callback, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(connectTimer);
+      clearTimeout(overallTimer);
+      callback(value);
+    };
     const request = client.get(
       parsed,
       {
         headers: {
           'User-Agent': userAgent,
           ...(cookie ? { Cookie: cookie } : {})
-        }
+        },
+        ...(network.address && parsed.hostname === network.hostname
+          ? {
+              lookup: (_hostname, _options, callback) =>
+                callback(null, network.address, network.family || 4)
+            }
+          : {})
       },
       response => {
         if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
@@ -1146,8 +1165,8 @@ function downloadTextOnce(sourceUrl, redirects = 0, userAgent = DEFAULT_USER_AGE
             return;
           }
           downloadTextOnce(new URL(location, sourceUrl).toString(), redirects + 1, userAgent, cookie)
-            .then(resolve)
-            .catch(reject);
+            .then(value => finish(resolve, value))
+            .catch(error => finish(reject, error));
           return;
         }
 
@@ -1155,7 +1174,7 @@ function downloadTextOnce(sourceUrl, redirects = 0, userAgent = DEFAULT_USER_AGE
           response.resume();
           const error = new Error(`HTTP ${response.statusCode}`);
           error.statusCode = response.statusCode;
-          reject(error);
+          finish(reject, error);
           return;
         }
 
@@ -1170,31 +1189,69 @@ function downloadTextOnce(sourceUrl, redirects = 0, userAgent = DEFAULT_USER_AGE
           chunks.push(chunk);
         });
         response.on('end', () => {
-          resolve(Buffer.concat(chunks).toString('utf8'));
+          finish(resolve, Buffer.concat(chunks).toString('utf8'));
         });
       }
     );
-    request.setTimeout(15000, () => {
-      request.destroy(new Error('request timed out'));
+    const overallTimer = setTimeout(() => {
+      request.destroy(new Error('request timed out after 60 seconds'));
+    }, 60000);
+    request.on('socket', socket => {
+      if (!socket.connecting) {
+        return;
+      }
+      connectTimer = setTimeout(() => {
+        request.destroy(new Error(`connection timed out for ${network.address || parsed.hostname}`));
+      }, 12000);
+      const connectedEvent = parsed.protocol === 'https:' ? 'secureConnect' : 'connect';
+      socket.once(connectedEvent, () => {
+        clearTimeout(connectTimer);
+        connectTimer = null;
+      });
     });
-    request.on('error', reject);
+    request.setTimeout(30000, () => {
+      request.destroy(new Error('subscription response stalled for 30 seconds'));
+    });
+    request.on('error', error => finish(reject, error));
   });
 }
 
 async function downloadText(sourceUrl, options = {}) {
   const cookie = options.cookie || '';
+  const parsed = new URL(sourceUrl);
+  let addresses = [];
   try {
-    const text = await downloadTextOnce(sourceUrl, 0, DEFAULT_USER_AGENT, cookie);
-    if (!looksLikeSubscriptionRejection(text)) {
-      return text;
-    }
+    addresses = await dns.promises.lookup(parsed.hostname, { all: true });
   } catch (error) {
-    if (error.statusCode !== 401 && error.statusCode !== 403) {
-      throw error;
+    // Let the normal request surface the DNS error with its original context.
+  }
+  const attempts = addresses.length
+    ? addresses.map(item => ({
+        hostname: parsed.hostname,
+        address: item.address,
+        family: item.family
+      }))
+    : [{}];
+  let lastError = null;
+
+  for (const network of attempts) {
+    try {
+      const text = await downloadTextOnce(sourceUrl, 0, DEFAULT_USER_AGENT, cookie, network);
+      if (!looksLikeSubscriptionRejection(text)) {
+        return text;
+      }
+      lastError = new Error('subscription server returned an access denial page');
+    } catch (error) {
+      lastError = error;
+      if (error.statusCode === 401 || error.statusCode === 403) {
+        break;
+      }
     }
   }
 
-  const fallbackText = await downloadTextOnce(sourceUrl, 0, SHADOWROCKET_USER_AGENT, cookie);
+  const fallbackText = await downloadTextOnce(sourceUrl, 0, SHADOWROCKET_USER_AGENT, cookie).catch(error => {
+    throw lastError || error;
+  });
   if (looksLikeSubscriptionRejection(fallbackText)) {
     throw new Error('subscription server returned an access denial page');
   }
@@ -1381,7 +1438,7 @@ function getFallbackProxies(paths) {
 }
 
 function patchConfigForRuntime(sourceText, corePort) {
-  let text = sourceText;
+  let text = sourceText.replace(/^mixed-port:.*(?:\r?\n|$)/m, '');
   const replacements = {
     port: DEFAULT_HTTP_PORT,
     'socks-port': DEFAULT_SOCKS_PORT,
@@ -1398,12 +1455,33 @@ function patchConfigForRuntime(sourceText, corePort) {
 }
 
 function ensureDirectRules(sourceText, settings = {}) {
+  let proxyTarget = 'Proxy';
+  try {
+    const document = yaml.load(sourceText);
+    const groups =
+      document && Array.isArray(document['proxy-groups'])
+        ? document['proxy-groups']
+        : document && Array.isArray(document['Proxy Group'])
+          ? document['Proxy Group']
+          : [];
+    const selectable = groups.filter(group => {
+      const type = String((group && group.type) || '').toLowerCase();
+      return group && group.name && ['select', 'url-test', 'fallback', 'load-balance'].includes(type);
+    });
+    const preferred = selectable.find(group => group.name === 'Proxy') || selectable[0];
+    if (preferred) {
+      proxyTarget = String(preferred.name);
+    }
+  } catch (error) {
+    // Leave YAML validation to mihomo and retain the compatibility default.
+  }
   const lines = sourceText.split(/\r?\n/);
   const rulesIndex = lines.findIndex(line => /^rules:\s*$/.test(line));
-  const routingRules = [...ALWAYS_PROXY_RULES, ...getDirectRules(settings)];
+  const proxyRules = ALWAYS_PROXY_RULES.map(rule => rule.replace(/,Proxy$/, `,${proxyTarget}`));
+  const routingRules = [...proxyRules, ...getDirectRules(settings)];
 
   if (rulesIndex === -1) {
-    const rules = [...routingRules, 'MATCH,Proxy'].map(rule => `  - ${rule}`);
+    const rules = [...routingRules, `MATCH,${proxyTarget}`].map(rule => `  - ${rule}`);
     return `${sourceText.replace(/\s*$/, '')}\nrules:\n${rules.join('\n')}\n`;
   }
 
