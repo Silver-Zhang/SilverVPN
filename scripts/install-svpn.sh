@@ -69,7 +69,8 @@ SilverVPN svpn command installed:
   $TARGET
 
 Open a new shell, then use:
-  svpn config ports 4780
+  cat /data/public/SilverVPN/PORTS.md
+  svpn config ports <your HTTP port>
   svpn on
   svpn status
 
