@@ -1,138 +1,103 @@
-# SilverVPN server multi-user proxy-only workflow
+# SilverVPN multi-user proxy-only server guide
 
-This workflow is for shared Linux servers such as `server29`.
+`svpn` is the headless per-user entry point for shared Linux servers.
 
-Design rules:
+Safety boundaries:
 
-- No TUN.
-- No `/etc/environment` proxy variables.
-- No `/etc/profile.d` global proxy injection.
-- Each Linux user owns their own subscription, config, ports, shell proxy file and VS Code Remote proxy settings.
-- The backend is proxy-only and can run in the background.
+- No TUN, system routes, DNS changes, `sudo`, `/etc/environment` or `/etc/profile.d`.
+- Every writable path is restricted to the invoking user's `$HOME`.
+- Each user owns a separate config, subscription set, PID, logs, ports, shell state and VS Code Remote settings.
 
-## Install the command
+## Install
 
-From each user's own account:
+Run as each Linux user:
 
 ```bash
 cd ~/app/SilverVPN
+npm install
 ./scripts/install-svpn.sh
-export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## Import subscription
+Open a new shell. `svpn` is installed at `~/.local/bin/svpn`.
 
-Do not paste subscription links into shared logs.
+## Personal ports
 
 ```bash
-svpn import 'sub://...'
-```
+# silver
+svpn config ports 4780
 
-## Set personal ports
-
-If only one user is running SilverVPN, the default port base can be `4780`.
-
-For multiple simultaneous users, assign a different base port to each user:
-
-```text
-silver:        4780 -> HTTP 4780, SOCKS 4781, Core 4790
-zhangjunxiao: 4880 -> HTTP 4880, SOCKS 4881, Core 4890
-renyushuo:    4980 -> HTTP 4980, SOCKS 4981, Core 4990
-```
-
-Example:
-
-```bash
+# zhangjunxiao
 svpn config ports 4880
 ```
 
-## Start backend
-
-```bash
-svpn start --proxy
-source ~/.config/SilverVPN/shell-proxy.sh
-```
-
-Check status:
-
-```bash
-svpn status
-```
-
-Example output:
+The base produces four loopback listeners:
 
 ```text
-SilverVPN：运行中
-用户：zhangjunxiao
-模式：智能代理 (rule)
-节点：2 美国洛杉矶（支持chatgpt gemini claude）  180 ms
-代理：HTTP 4880 / SOCKS 4881
-终端代理：已开启
-VS Code：已配置 override
-后台：PID 12345
+base       HTTP
+base + 1   SOCKS
+base + 8   service/API
+base + 10  mihomo controller
 ```
 
-## Switch mode
+Port settings are stored in `~/.config/SilverVPN/server.json`.
+
+## One-click operation
+
+```bash
+svpn on
+svpn status
+svpn off
+```
+
+`svpn on` starts the current user's proxy-only daemon, enables terminal proxy state, and configures both VS Code Stable and Insiders Remote.
+
+`svpn off` stops only the current user's daemon and removes only that user's terminal and VS Code proxy settings.
+
+The installer adds a Bash/Zsh hook. New shells automatically inherit the current state. An already-running shell cannot be modified by a child process, but its next prompt synchronizes automatically when the hook is loaded.
+
+## Subscriptions and nodes
+
+```bash
+svpn import '<private-subscription-url>' 'Lab subscription'
+svpn profile list
+svpn profile use 1
+
+svpn nodes
+svpn nodes --delay
+svpn delay
+svpn use 3
+```
+
+Do not paste private subscription URLs into shared logs or reports.
+
+## Modes and tests
 
 ```bash
 svpn mode smart
 svpn mode global
 svpn mode direct
+svpn test
 ```
 
-## Switch node
+All three modes remain proxy-only. They do not enable TUN or modify system networking.
 
-```bash
-svpn nodes
-svpn nodes --delay
-svpn use 17
-svpn use '2 美国洛杉矶'
-```
-
-## Configure VS Code Remote
-
-```bash
-svpn vscode on
-pkill -f .vscode-server || true
-```
-
-Reconnect VS Code Remote after killing the server.
-
-This writes per-user files only:
+## Per-user files
 
 ```text
+~/.config/SilverVPN/
+~/.local/bin/svpn
 ~/.vscode-server/data/Machine/settings.json
 ~/.vscode-server/server-env-setup
-~/.config/SilverVPN/shell-proxy.sh
+~/.vscode-server-insiders/data/Machine/settings.json
+~/.vscode-server-insiders/server-env-setup
 ```
 
-It sets:
+VS Code settings use:
 
 ```json
 {
-  "http.proxy": "http://127.0.0.1:<user-http-port>",
+  "http.proxy": "http://127.0.0.1:<personal-http-port>",
   "http.proxySupport": "override",
   "http.proxyStrictSSL": true
 }
 ```
-
-## Test connectivity
-
-```bash
-svpn test
-```
-
-## Stop
-
-```bash
-svpn stop
-source ~/.config/SilverVPN/shell-proxy.sh
-```
-
-## Notes
-
-- `svpn` starts mihomo directly with a runtime config generated from the user's active config.
-- Runtime config removes `tun`, `mixed-port`, `redir-port` and `tproxy-port` to keep the server proxy-only.
-- Port assignments are stored in `~/.config/SilverVPN/server.json`.
-- The process PID is stored in `~/.config/SilverVPN/svpn.pid`.
-- Logs are under `~/.config/SilverVPN/logs/`.
