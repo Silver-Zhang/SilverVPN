@@ -16,6 +16,7 @@ while [ -L "$SOURCE" ]; do
 done
 APP_ROOT=$(cd "$(dirname "$SOURCE")/.." && pwd)
 JS="$APP_ROOT/bin/svpn.js"
+IMPORT_JS="$APP_ROOT/bin/svpn-import.js"
 
 cmd="${1:-help}"
 
@@ -86,6 +87,17 @@ case "$cmd" in
     run_node stop "$@" || true
     echo 'SilverVPN 一键关闭完成。'
     ;;
+  import)
+    shift || true
+    node "$IMPORT_JS" "$@"
+    if run_node status --json >/tmp/svpn-status-$$.json 2>/dev/null; then
+      if grep -q '"running": true' /tmp/svpn-status-$$.json; then
+        echo '检测到后台正在运行，正在重启以应用新订阅...'
+        run_node restart || true
+      fi
+    fi
+    rm -f /tmp/svpn-status-$$.json
+    ;;
   test)
     shift || true
     run_node test "$@"
@@ -103,8 +115,9 @@ case "$cmd" in
     run_node help
     echo
     echo 'Extended wrapper:'
-    echo '  svpn on   Start backend, terminal proxy and VS Code Stable/Insiders proxy without the old intermediate warning.'
-    echo '  svpn test Includes Claude and Anthropic API checks in addition to the core tests.'
+    echo '  svpn on      Start backend, terminal proxy and VS Code Stable/Insiders proxy without the old intermediate warning.'
+    echo '  svpn import  Imports Clash/Mihomo YAML and URI subscriptions: ss, ssr, vmess, trojan, vless, hysteria2/hy2, tuic, snell.'
+    echo '  svpn test    Includes Claude and Anthropic API checks in addition to the core tests.'
     ;;
   *)
     exec node "$JS" "$@"
