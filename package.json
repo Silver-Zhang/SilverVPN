@@ -7,6 +7,8 @@
   "productName": "SilverVPN",
   "scripts": {
     "cli": "node cli.js",
+    "svpn": "node bin/svpn.js",
+    "install:svpn": "./scripts/install-svpn.sh",
     "serve": "node cli.js serve",
     "doctor": "node cli.js doctor",
     "verify": "node scripts/verify.js",
@@ -15,7 +17,7 @@
     "start": "electron .",
     "install:desktop": "./scripts/install.sh",
     "update:desktop": "./scripts/update.sh",
-    "check": "node --check cli.js && node --check main.js && node --check preload.js && node --check renderer/app.js && node --check scripts/verify.js",
+    "check": "node --check cli.js && node --check bin/svpn.js && node --check main.js && node --check preload.js && node --check renderer/app.js && node --check scripts/verify.js",
     "pack": "electron-builder --linux AppImage deb"
   },
   "dependencies": {
@@ -31,6 +33,7 @@
     "files": [
       "main.js",
       "cli.js",
+      "bin/**/*",
       "preload.js",
       "package.json",
       "renderer/**/*"
