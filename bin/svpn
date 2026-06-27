@@ -17,6 +17,7 @@ done
 APP_ROOT=$(cd "$(dirname "$SOURCE")/.." && pwd)
 JS="$APP_ROOT/bin/svpn.js"
 IMPORT_JS="$APP_ROOT/bin/svpn-import.js"
+PROFILE_JS="$APP_ROOT/bin/svpn-profile.js"
 
 cmd="${1:-help}"
 
@@ -98,6 +99,15 @@ case "$cmd" in
     fi
     rm -f /tmp/svpn-status-$$.json
     ;;
+  profile)
+    subcmd="${2:-list}"
+    if [[ "$subcmd" == "rename" || "$subcmd" == "delete" || "$subcmd" == "remove" || "$subcmd" == "rm" ]]; then
+      shift || true
+      node "$PROFILE_JS" "$@"
+    else
+      exec node "$JS" "$@"
+    fi
+    ;;
   test)
     shift || true
     run_node test "$@"
@@ -115,9 +125,11 @@ case "$cmd" in
     run_node help
     echo
     echo 'Extended wrapper:'
-    echo '  svpn on      Start backend, terminal proxy and VS Code Stable/Insiders proxy without the old intermediate warning.'
-    echo '  svpn import  Imports Clash/Mihomo YAML and URI subscriptions: ss, ssr, vmess, trojan, vless, hysteria2/hy2, tuic, snell.'
-    echo '  svpn test    Includes Claude and Anthropic API checks in addition to the core tests.'
+    echo '  svpn on                         Start backend, terminal proxy and VS Code Stable/Insiders proxy without the old intermediate warning.'
+    echo '  svpn import                     Imports Clash/Mihomo YAML and URI subscriptions: ss, ssr, vmess, trojan, vless, hysteria2/hy2, tuic, snell.'
+    echo '  svpn profile rename <id> <name> Rename a saved subscription profile.'
+    echo '  svpn profile delete <id> --yes  Delete a saved subscription profile.'
+    echo '  svpn test                       Includes Claude and Anthropic API checks in addition to the core tests.'
     ;;
   *)
     exec node "$JS" "$@"
