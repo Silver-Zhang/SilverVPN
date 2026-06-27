@@ -1,8 +1,34 @@
 # SilverVPN
 
-SilverVPN is a Linux desktop client for mihomo-compatible subscriptions. It provides account and subscription profiles, node selection, smart/global/direct routing, GNOME and terminal proxy integration, optional TUN routing, diagnostics, and intranet bypass rules.
+[English](README.md) | [中文](README.zh-CN.md)
 
-## Install
+SilverVPN is an open-source Linux VPN and proxy client built around the mihomo core. It provides both a desktop GUI and a headless `svpn` command-line workflow for personal Linux machines, remote development environments, and shared multi-user Linux servers.
+
+The project focuses on practical Linux usage: subscription import, profile management, node selection, smart/global/direct routing, terminal proxy integration, VS Code Remote proxy integration, optional TUN routing, and per-user isolation for server deployments.
+
+## Highlights
+
+- **Linux desktop client**: Electron-based GUI with subscription, node, mode and diagnostics panels.
+- **Headless CLI**: `svpn on`, `svpn off`, `svpn status`, `svpn import`, `svpn nodes`, `svpn use`, `svpn test`.
+- **Subscription support**: Clash/Mihomo YAML, subscription URLs, `sub://...`, URI lists, and common proxy schemes such as `ss`, `ssr`, `vmess`, `trojan`, `vless`, `hysteria2`, `tuic`, and `snell`.
+- **Profile management**: list, switch, rename and delete saved subscription profiles.
+- **Routing modes**: smart/rule, global, and direct.
+- **Proxy-only mode**: HTTP/SOCKS proxy integration without changing system routes or DNS.
+- **Optional TUN mode**: system-level routing for applications that do not support HTTP/SOCKS proxy settings.
+- **Multi-user server support**: per-user data directories, per-user ports, per-user daemon, per-user terminal state, and per-user VS Code Remote settings.
+- **Developer-tool friendly**: works with terminal tools and remote IDE workflows through explicit proxy variables and VS Code Remote configuration.
+
+## Documentation
+
+| Topic | English | 中文 |
+|---|---|---|
+| Installation and usage | [User Guide](docs/user-guide.md) | [用户手册](docs/user-guide.zh-CN.md) |
+| Multi-user Linux server deployment | [Multi-user Server Guide](docs/multi-user-server.md) | [多人服务器部署指南](docs/multi-user-server.zh-CN.md) |
+| Subscription profile management | [Profile Management](docs/profile-management.md) | [订阅方案管理](docs/profile-management.zh-CN.md) |
+
+Legacy document paths are kept for compatibility, but the generic documents above are the preferred entry points.
+
+## Quick install
 
 Ubuntu/Debian prerequisites:
 
@@ -17,141 +43,75 @@ Clone and install:
 git clone https://github.com/Silver-Zhang/SilverVPN.git
 cd SilverVPN
 ./scripts/install.sh
+./scripts/install-svpn.sh
 ```
 
-The normal installer does not use `sudo`. It creates:
+The desktop launcher is installed to `~/.local/bin/silvervpn`. The headless CLI is installed to `~/.local/bin/svpn`.
 
-- `~/.local/bin/silvervpn`
-- `~/.local/share/applications/silvervpn.desktop`
-- `~/Desktop/SilverVPN.desktop` or the localized desktop equivalent
-- `~/.config/SilverVPN/shell-hook.sh`
+Open a new shell after installing `svpn`, or ensure `~/.local/bin` is in `PATH`:
 
-It removes obsolete `silvervpn-run`, `silvervpn-code`, and `silvervpn-claude` launchers. There is only one application entry: `SilverVPN`.
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
-Launch it from the application menu, the desktop icon, or:
+## Desktop usage
+
+Launch SilverVPN from the application menu, from the generated desktop icon, or with:
 
 ```bash
 ~/.local/bin/silvervpn
 ```
 
-The launcher directly executes the installed Electron binary, so it does not depend on the graphical desktop inheriting an nvm or shell-specific `PATH`.
+The desktop mode is suitable for personal Linux machines where GNOME system proxy integration and GUI-based node selection are preferred.
 
-## Desktop Icon Troubleshooting
+## Headless CLI usage
 
-If clicking the icon does nothing:
-
-```bash
-cat ~/.local/state/SilverVPN/launcher.log
-gtk-launch silvervpn
-```
-
-Recreate the launcher:
+Import a subscription:
 
 ```bash
-cd ~/SilverVPN
-./scripts/install.sh
+svpn import '<subscription-url-or-file>' 'My Profile'
 ```
 
-If installation reports that `node_modules/electron/dist/electron` is missing:
+Start the per-user proxy-only backend and integrations:
 
 ```bash
-cd ~/SilverVPN
-./scripts/install-electron.sh
-./scripts/install.sh
+svpn on
+svpn status
 ```
 
-The Electron installer ignores a shell-wide production-only npm setting, forces development dependencies and lifecycle scripts, and retries an incomplete Electron download once.
-
-On GNOME, a copied `.desktop` file may require right-clicking it and choosing **Allow Launching**. The installer also marks it trusted through `gio` when supported.
-
-## Update
+Manage nodes and routing mode:
 
 ```bash
-cd ~/SilverVPN
-./scripts/update.sh
+svpn nodes --delay
+svpn use 3
+svpn mode smart
+svpn test
 ```
 
-If the repository was already pulled:
+Stop the current user's backend and proxy integrations:
 
 ```bash
-./scripts/install.sh
+svpn off
 ```
 
-## Routing Options
+## Multi-user server usage
 
-### System And Terminal Proxy
-
-This mode starts the normal user-owned mihomo core and configures:
-
-- HTTP proxy: `127.0.0.1:4780`
-- SOCKS5 proxy: `127.0.0.1:4781`
-- GNOME system proxy
-- Bash/Zsh proxy environment synchronization
-
-New terminal processes inherit the proxy automatically. Existing applications must be restarted because Linux cannot change the environment of an already running process.
-
-### TUN Mode
-
-TUN routes applications that do not support HTTP/SOCKS settings. It is off by default and requires a one-time privileged installation:
+For shared servers, each Linux user should install and run `svpn` under their own account. SilverVPN stores each user's configuration under that user's home directory and can use a dedicated personal port group:
 
 ```bash
-./scripts/install-tun.sh
+svpn config ports 20080
 ```
 
-The script:
+Port group rule:
 
-- downloads a pinned official mihomo release
-- verifies its SHA256 digest
-- installs it root-owned at `/usr/local/libexec/silvervpn/mihomo`
-- grants only `CAP_NET_ADMIN`
-- records privileged commands in `logs/privileged-commands.log`
-
-TUN uses the dedicated interface `silvervpn0`, route table `20229`, and rule range starting at `19000`. SilverVPN verifies that these artifacts disappear when TUN stops.
-
-SilverVPN refuses to enable TUN when ExpressVPN, iNode, OpenVPN, WireGuard, another tunnel interface, or conflicting policy routing is active. It never flushes another VPN's routes.
-
-The TUN panel provides:
-
-- **Recheck**: refresh conflict detection without changing the network.
-- **Restore network**: stop SilverVPN-owned proxy/TUN state and verify that `silvervpn0`, table `20229`, and SilverVPN rules are gone.
-
-It deliberately does not offer “remove other VPN policies”; deleting unknown routes cannot be made safe.
-
-## Modes
-
-- **Smart / Rule**: private networks and China traffic direct; foreign traffic through the selected node.
-- **Global**: traffic handled by SilverVPN uses the selected node.
-- **Direct**: traffic handled by SilverVPN goes direct.
-
-CLI equivalents:
-
-```bash
-node cli.js mode rule
-node cli.js mode global
-node cli.js mode direct
+```text
+base       HTTP proxy
+base + 1   SOCKS proxy
+base + 8   svpn service/API
+base + 10  mihomo controller
 ```
 
-## Profiles
-
-SilverVPN supports:
-
-- account login and `pc_sub` refresh
-- subscription URL
-- `sub://...`
-- `.url`, YAML, or text subscription files
-
-Each source is stored as a separate profile with its own node list.
-
-## ExpressVPN
-
-Only one system-level tunnel should own routing at a time:
-
-1. Disconnect ExpressVPN and disable any active split-tunnel routing.
-2. Confirm the SilverVPN TUN panel reports that preflight passed.
-3. Enable SilverVPN TUN.
-4. Disable SilverVPN TUN and wait for cleanup before reconnecting ExpressVPN.
-
-When ExpressVPN must remain active, leave SilverVPN TUN off and use **System and terminal proxy**.
+See [Multi-user Server Guide](docs/multi-user-server.md) or [多人服务器部署指南](docs/multi-user-server.zh-CN.md).
 
 ## Validation
 
@@ -162,4 +122,8 @@ node cli.js doctor
 node cli.js status
 ```
 
-See [INSTALL_USAGE_GUIDE.md](INSTALL_USAGE_GUIDE.md) for the complete Chinese installation and usage guide.
+## Safety model
+
+In proxy-only mode, SilverVPN does not modify system routes, DNS, `/etc/environment`, `/etc/profile.d`, or global proxy files. In multi-user CLI deployments, writable paths are restricted to the invoking user's home directory.
+
+TUN mode is optional and requires a separate privileged setup step because it creates a virtual network interface and system routing rules.
