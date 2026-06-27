@@ -146,7 +146,46 @@ svpn profile use 熊猫云
 
 ---
 
-## 7. 一键开启 SilverVPN
+## 7. 管理订阅方案名称和删除方案
+
+如果导入订阅时忘记命名，或者后续想改成更清楚的名称，可以重命名：
+
+```bash
+svpn profile rename 1 熊猫云
+svpn profile rename "Custom Subscription" Grempt
+svpn profile rename custom-xxxxxx 自用订阅
+```
+
+第一个参数可以是编号、完整名称、profile id 或唯一名称片段；第二个参数是新的显示名称。重命名只修改当前用户自己的 profile 记录，不会影响其他用户。
+
+删除订阅方案：
+
+```bash
+svpn profile delete 2
+```
+
+删除当前正在使用的方案需要显式确认：
+
+```bash
+svpn profile delete 1 --yes
+```
+
+也可以使用别名：
+
+```bash
+svpn profile rm 1 --yes
+svpn profile remove 1 --yes
+```
+
+说明：
+
+- 删除只删除当前用户自己的 profile 记录和对应的本地订阅 YAML 文件；
+- 删除当前正在使用的方案时，active Clash 配置文件会保留，避免破坏正在运行的后台进程；
+- 删除当前方案后，可以通过 `svpn profile use <其他方案>` 或 `svpn import <订阅链接> <方案名>` 重新绑定保存的方案。
+
+---
+
+## 8. 一键开启 SilverVPN
 
 ```bash
 svpn on
@@ -184,7 +223,7 @@ VS Code Insiders：已配置 override
 
 ---
 
-## 8. 终端代理生效说明
+## 9. 终端代理生效说明
 
 安装 `svpn` 后，会在当前用户自己的 shell 配置中加入 hook。通常情况下，新开的终端会自动读取代理状态。
 
@@ -205,7 +244,7 @@ echo
 
 ---
 
-## 9. 节点管理
+## 10. 节点管理
 
 查看节点：
 
@@ -238,7 +277,7 @@ svpn test
 
 ---
 
-## 10. 切换代理模式
+## 11. 切换代理模式
 
 ```bash
 svpn mode smart
@@ -256,7 +295,7 @@ svpn mode direct
 
 ---
 
-## 11. 网络测试
+## 12. 网络测试
 
 ```bash
 svpn test
@@ -275,7 +314,7 @@ svpn test
 
 ---
 
-## 12. VS Code / Copilot / Codex 使用说明
+## 13. VS Code / Copilot / Codex 使用说明
 
 `svpn on` 会同时配置：
 
@@ -316,7 +355,7 @@ svpn test
 
 ---
 
-## 13. 一键关闭 SilverVPN
+## 14. 一键关闭 SilverVPN
 
 ```bash
 svpn off
@@ -338,7 +377,7 @@ ss -ltnp | grep -E '5080|5081|5088|5090' || echo "当前用户端口已释放"
 
 ---
 
-## 14. 常用命令速查
+## 15. 常用命令速查
 
 ```bash
 svpn on
@@ -352,6 +391,9 @@ svpn import '<订阅链接>' '方案名'
 svpn profile list
 svpn profile use 1
 svpn profile use 方案名
+svpn profile rename 1 新方案名
+svpn profile delete 2
+svpn profile delete 1 --yes
 
 svpn nodes
 svpn nodes --delay
@@ -368,7 +410,7 @@ svpn test
 
 ---
 
-## 15. 常见问题
+## 16. 常见问题
 
 ### `svpn on` 提示端口被占用
 
@@ -415,7 +457,7 @@ sudo chown -R 用户名:用户组 /home/用户名/app/SilverVPN
 
 ---
 
-## 16. 禁止事项
+## 17. 禁止事项
 
 普通用户不要执行：
 
