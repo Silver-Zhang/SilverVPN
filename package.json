@@ -17,7 +17,7 @@
     "start": "electron .",
     "install:desktop": "./scripts/install.sh",
     "update:desktop": "./scripts/update.sh",
-    "check": "node --check cli.js && node --check bin/svpn.js && node --check bin/svpn-import.js && bash -n bin/svpn && node --check main.js && node --check preload.js && node --check renderer/app.js && node --check scripts/verify.js",
+    "check": "node --check cli.js && node --check bin/svpn.js && node --check bin/svpn-import.js && node --check bin/svpn-profile.js && bash -n bin/svpn && node --check main.js && node --check preload.js && node --check renderer/app.js && node --check scripts/verify.js",
     "pack": "electron-builder --linux AppImage deb"
   },
   "dependencies": {
