@@ -53,11 +53,10 @@
         <div id="kpiCoreCard" class="kpi-card">
           <span class="kpi-icon" aria-hidden="true">◉</span>
           <span class="kpi-hud" aria-hidden="true">
-            <span class="hud-ring hud-ring-outer"></span>
-            <span class="hud-ring hud-ring-inner"></span>
-            <span class="hud-sweep"></span>
+            <span class="hud-wave"></span>
+            <span class="hud-wave hud-wave-2"></span>
             <span class="hud-core"></span>
-            <span class="hud-particles"><i></i><i></i><i></i></span>
+            <span class="hud-orbit"><i></i><i></i><i></i></span>
           </span>
           <span class="kpi-label" data-i18n="kpiCoreLabel">核心状态</span>
           <span id="kpiCore" class="kpi-value dim">读取中</span>
@@ -401,6 +400,14 @@
               <input id="particlesIntensity" type="range" min="10" max="100" step="5" value="60" />
               <p class="appearance-hint" data-i18n="particlesIntensityHint">控制粒子数量、速度与星轨连线密度。</p>
             </div>
+          </div>
+          <div class="appearance-row">
+            <div class="appearance-col">
+              <label class="field-label" for="particlesSpeed"><span data-i18n="particlesSpeedLabel">粒子速度</span> <span id="particlesSpeedValue" class="slider-value">1.0×</span></label>
+              <input id="particlesSpeed" type="range" min="20" max="200" step="10" value="100" />
+              <p class="appearance-hint" data-i18n="particlesSpeedHint">飞行与排斥的响应速度。</p>
+            </div>
+            <div class="appearance-col"></div>
           </div>
         </section>
 

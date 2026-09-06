@@ -233,6 +233,8 @@ button {
 #particleLayer {
   position: fixed;
   inset: 0;
+  width: 100%;
+  height: 100%;
   z-index: 5;
   pointer-events: none;
 }
@@ -493,146 +495,140 @@ dd,
   font-weight: 800;
 }
 
-/* 科幻 HUD：外环虚线慢转 + 内环反向亮弧 + 雷达扫光 + 核心脉冲 + 轨道粒子 */
+/* 核心状态 HUD：能量脉冲光球 —— 发光核心 + 扩散能量波 + 轨道光点 */
 .kpi-hud {
   position: absolute;
   right: 10px;
-  top: 8px;
-  width: 64px;
-  height: 64px;
+  top: 10px;
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
 }
 
-.hud-ring {
-  position: absolute;
-  border-radius: 50%;
-}
-
-.hud-ring-outer {
-  inset: 0;
-  border: 1px dashed rgba(96, 165, 250, 0.42);
-  animation: ring-spin 14s linear infinite;
-}
-
-.hud-ring-inner {
-  inset: 9px;
-  border: 0;
-  border-top: 2px solid var(--green);
-  animation: ring-spin-reverse 3.2s linear infinite;
-}
-
-.hud-sweep {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0deg 250deg, rgba(52, 211, 153, 0.14) 300deg, rgba(34, 211, 238, 0.55) 345deg, transparent 360deg);
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
-  animation: ring-spin 2.4s linear infinite;
-}
-
+/* 中心发光核心 */
 .hud-core {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 10px;
-  height: 10px;
-  margin: -5px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--green);
-  box-shadow: 0 0 14px rgba(52, 211, 153, 0.95), 0 0 30px rgba(34, 211, 238, 0.5);
-  animation: hud-core-pulse 1.6s ease-in-out infinite;
+  background:
+    radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.95), transparent 42%),
+    radial-gradient(circle, var(--green) 0%, rgba(52, 211, 153, 0.4) 55%, transparent 75%);
+  box-shadow:
+    0 0 10px rgba(52, 211, 153, 0.9),
+    0 0 24px rgba(52, 211, 153, 0.55),
+    0 0 46px rgba(34, 211, 238, 0.35);
+  animation: hud-core-breathe 2.4s ease-in-out infinite;
 }
 
-.hud-particles i {
+/* 扩散能量波：从核心向外扩散并渐隐 */
+.hud-wave {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 4px;
-  height: 4px;
-  margin: -2px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: var(--cyan);
-  box-shadow: 0 0 8px rgba(34, 211, 238, 0.9);
-  animation: hud-orbit 3.6s linear infinite;
+  background: radial-gradient(circle, rgba(52, 211, 153, 0.4), rgba(34, 211, 238, 0.12) 60%, transparent 72%);
+  animation: hud-wave-spread 2.4s ease-out infinite;
 }
 
-.hud-particles i:nth-child(2) {
+.hud-wave-2 {
   animation-delay: -1.2s;
 }
 
-.hud-particles i:nth-child(3) {
-  animation-delay: -2.4s;
+/* 轨道光点：无轨道环，仅光点绕核心飞行 */
+.hud-orbit i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 9px rgba(34, 211, 238, 0.95), 0 0 18px rgba(34, 211, 238, 0.4);
+  animation: hud-orbit 4.2s linear infinite;
 }
 
-@keyframes ring-spin {
-  to {
-    transform: rotate(360deg);
+.hud-orbit i:nth-child(2) {
+  width: 4px;
+  height: 4px;
+  margin: -2px;
+  animation-delay: -1.4s;
+  animation-duration: 3.4s;
+}
+
+.hud-orbit i:nth-child(3) {
+  width: 3px;
+  height: 3px;
+  margin: -1.5px;
+  animation-delay: -2.8s;
+  animation-duration: 5s;
+}
+
+@keyframes hud-core-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.28);
+    filter: brightness(1.25);
   }
 }
 
-@keyframes ring-spin-reverse {
-  to {
-    transform: rotate(-360deg);
+@keyframes hud-wave-spread {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.85;
+  }
+  70% {
+    opacity: 0.25;
+  }
+  100% {
+    transform: scale(3.2);
+    opacity: 0;
   }
 }
 
 @keyframes hud-orbit {
   from {
-    transform: rotate(0deg) translateX(29px);
+    transform: rotate(0deg) translateX(22px);
   }
   to {
-    transform: rotate(360deg) translateX(29px);
-  }
-}
-
-@keyframes hud-core-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.45);
-    opacity: 0.78;
+    transform: rotate(360deg) translateX(22px);
   }
 }
 
 /* 停止状态：静态灰 */
-.kpi-card.is-off .hud-ring-outer {
-  border-color: rgba(127, 146, 181, 0.32);
-  animation: none;
-}
-
-.kpi-card.is-off .hud-ring-inner {
-  border-top-color: var(--muted);
-  animation: none;
-}
-
-.kpi-card.is-off .hud-sweep {
-  background: rgba(127, 146, 181, 0.16);
-  animation: none;
-}
-
 .kpi-card.is-off .hud-core {
-  background: var(--muted);
+  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.35), transparent 42%), var(--muted);
   box-shadow: none;
   animation: none;
 }
 
-.kpi-card.is-off .hud-particles i {
+.kpi-card.is-off .hud-wave {
+  background: rgba(127, 146, 181, 0.2);
+  animation: none;
+  opacity: 0.4;
+}
+
+.kpi-card.is-off .hud-orbit i {
   background: var(--muted);
   box-shadow: none;
-  opacity: 0.5;
+  opacity: 0.45;
   animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .kpi-hud .hud-ring-outer,
-  .kpi-hud .hud-ring-inner,
-  .kpi-hud .hud-sweep,
   .kpi-hud .hud-core,
-  .kpi-hud .hud-particles i {
+  .kpi-hud .hud-wave,
+  .kpi-hud .hud-orbit i {
     animation: none;
+  }
+
+  .kpi-hud .hud-wave {
+    opacity: 0.3;
   }
 }
 
