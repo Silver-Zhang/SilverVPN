@@ -12,8 +12,8 @@
   const particles = [];
   const mouse = { x: -9999, y: -9999 };
 
-  // 用户配置：开关 + 强度（0.1 ~ 1）
-  const cfg = { enabled: true, intensity: 0.6 };
+  // 用户配置：开关 + 强度（0.1 ~ 1）+ 速度倍率（0.2 ~ 2）
+  const cfg = { enabled: true, intensity: 0.6, speed: 1 };
   let rafId = 0;
   let running = false;
 
@@ -21,13 +21,13 @@
   function params() {
     const k = cfg.intensity;
     return {
-      count: Math.round(10 + 46 * k),
-      radius: 1.1 + 0.5 * k,
-      speed: 0.22 + 0.24 * k,
-      pushRadius: 90 + 60 * k,
-      pushForce: 0.7 + 0.3 * k,
-      linkDist: 85 + 55 * k,
-      linkAlpha: 0.3 + 0.22 * k
+      count: Math.round(12 + 48 * k),
+      radius: 1.0 + 0.5 * k,
+      speed: (0.45 + 0.3 * k) * cfg.speed,
+      pushRadius: 120 + 60 * k,
+      pushForce: 0.95 + 0.2 * k,
+      linkDist: 90 + 60 * k,
+      linkAlpha: 0.32 + 0.22 * k
     };
   }
 
@@ -128,9 +128,9 @@
       particle.vx *= 0.984;
       particle.vy *= 0.984;
       const speed = Math.hypot(particle.vx, particle.vy);
-      if (speed > 1.7) {
-        particle.vx *= 1.7 / speed;
-        particle.vy *= 1.7 / speed;
+      if (speed > 2.4) {
+        particle.vx *= 2.4 / speed;
+        particle.vy *= 2.4 / speed;
       } else if (speed < 0.1) {
         particle.vx += (Math.random() - 0.5) * 0.05;
         particle.vy += (Math.random() - 0.5) * 0.05;
@@ -178,6 +178,18 @@
     if (typeof next.intensity === 'number') {
       cfg.intensity = Math.min(1, Math.max(0.1, next.intensity));
     }
+    if (typeof next.speed === 'number') {
+      const previous = cfg.speed;
+      cfg.speed = Math.min(2, Math.max(0.2, next.speed));
+      // 已有粒子按倍率同步缩放速度（保留方向），避免只有新粒子变快
+      if (previous !== cfg.speed) {
+        const ratio = cfg.speed / previous;
+        for (const particle of particles) {
+          particle.vx *= ratio;
+          particle.vy *= ratio;
+        }
+      }
+    }
     if (cfg.enabled) {
       syncCount();
       start();
@@ -191,6 +203,7 @@
     apply: applyConfig,
     isEnabled: () => cfg.enabled,
     getIntensity: () => cfg.intensity,
+    getSpeed: () => cfg.speed,
     getParticles: () => particles
   };
 

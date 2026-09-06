@@ -506,19 +506,17 @@ dd,
   place-items: center;
 }
 
-/* 中心发光核心 */
+/* 中心发光核心：小光点 + 多层辉光，亮度呼吸（不变形） */
 .hud-core {
-  width: 16px;
-  height: 16px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background:
-    radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.95), transparent 42%),
-    radial-gradient(circle, var(--green) 0%, rgba(52, 211, 153, 0.4) 55%, transparent 75%);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.95) 0%, var(--green) 45%, rgba(52, 211, 153, 0.5) 75%, transparent 100%);
   box-shadow:
-    0 0 10px rgba(52, 211, 153, 0.9),
-    0 0 24px rgba(52, 211, 153, 0.55),
-    0 0 46px rgba(34, 211, 238, 0.35);
-  animation: hud-core-breathe 2.4s ease-in-out infinite;
+    0 0 6px rgba(52, 211, 153, 0.9),
+    0 0 16px rgba(52, 211, 153, 0.55),
+    0 0 34px rgba(34, 211, 238, 0.3);
+  animation: hud-core-glow 2.6s ease-in-out infinite;
 }
 
 /* 扩散能量波：从核心向外扩散并渐隐 */
@@ -565,15 +563,15 @@ dd,
   animation-duration: 5s;
 }
 
-@keyframes hud-core-breathe {
+@keyframes hud-core-glow {
   0%,
   100% {
-    transform: scale(1);
-    filter: brightness(1);
+    opacity: 0.7;
+    filter: brightness(0.9);
   }
   50% {
-    transform: scale(1.28);
-    filter: brightness(1.25);
+    opacity: 1;
+    filter: brightness(1.35);
   }
 }
 
@@ -602,9 +600,10 @@ dd,
 
 /* 停止状态：静态灰 */
 .kpi-card.is-off .hud-core {
-  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.35), transparent 42%), var(--muted);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.4) 0%, var(--muted) 45%, rgba(127, 146, 181, 0.4) 75%, transparent 100%);
   box-shadow: none;
   animation: none;
+  opacity: 0.5;
 }
 
 .kpi-card.is-off .hud-wave {
