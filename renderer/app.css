@@ -484,46 +484,52 @@ dd,
 }
 
 .kpi-icon {
-  width: 32px;
-  height: 32px;
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
+  border-radius: 13px;
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(34, 211, 238, 0.12));
   color: var(--blue-bright);
-  font-size: 15px;
+  font-size: 20px;
   font-weight: 800;
 }
 
 /* 核心状态 HUD：能量脉冲光球 —— 发光核心 + 扩散能量波 + 轨道光点 */
 .kpi-hud {
   position: absolute;
-  right: 10px;
-  top: 10px;
-  width: 60px;
-  height: 60px;
-  display: grid;
-  place-items: center;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 64px;
+  height: 64px;
 }
 
-/* 中心发光核心：小光点 + 多层辉光，亮度呼吸（不变形） */
+/* 中心发光核心：小光点 + 多层辉光，不规则漂移 + 亮度呼吸 */
 .hud-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: 7px;
   height: 7px;
+  margin: -3.5px 0 0 -3.5px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(255, 255, 255, 0.95) 0%, var(--green) 45%, rgba(52, 211, 153, 0.5) 75%, transparent 100%);
   box-shadow:
     0 0 6px rgba(52, 211, 153, 0.9),
     0 0 16px rgba(52, 211, 153, 0.55),
     0 0 34px rgba(34, 211, 238, 0.3);
-  animation: hud-core-glow 2.6s ease-in-out infinite;
+  animation: hud-core-glide 7s ease-in-out infinite;
 }
 
 /* 扩散能量波：从核心向外扩散并渐隐 */
 .hud-wave {
   position: absolute;
+  left: 50%;
+  top: 50%;
   width: 18px;
   height: 18px;
+  margin: -9px 0 0 -9px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(52, 211, 153, 0.4), rgba(34, 211, 238, 0.12) 60%, transparent 72%);
   animation: hud-wave-spread 2.4s ease-out infinite;
@@ -534,6 +540,11 @@ dd,
 }
 
 /* 轨道光点：无轨道环，仅光点绕核心飞行 */
+.hud-orbit {
+  position: absolute;
+  inset: 0;
+}
+
 .hud-orbit i {
   position: absolute;
   left: 50%;
@@ -563,15 +574,33 @@ dd,
   animation-duration: 5s;
 }
 
-@keyframes hud-core-glow {
-  0%,
-  100% {
+/* 光点不规则漂移（“随机动”），叠加轻微亮度呼吸 */
+@keyframes hud-core-glide {
+  0% {
+    transform: translate(0, 0);
     opacity: 0.7;
     filter: brightness(0.9);
   }
-  50% {
+  18% {
+    transform: translate(3px, -4px);
+  }
+  36% {
+    transform: translate(-4px, 2px);
     opacity: 1;
     filter: brightness(1.35);
+  }
+  54% {
+    transform: translate(2px, 5px);
+  }
+  72% {
+    transform: translate(-3px, -2px);
+    opacity: 0.8;
+    filter: brightness(1.1);
+  }
+  100% {
+    transform: translate(0, 0);
+    opacity: 0.7;
+    filter: brightness(0.9);
   }
 }
 
@@ -1523,8 +1552,8 @@ input[type='range'] {
 
 .panel-title-row h2::before {
   content: "";
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   flex: none;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--blue), var(--cyan));
