@@ -23,10 +23,12 @@ const { URL } = require('url');
 const APP_NAME = 'SilverVPN';
 const LEGACY_APP_NAMES = ['熊猫上网 Linux', 'xiongmao-vpn-linux'];
 const CONTROL_HOST = '127.0.0.1';
-const PUBLIC_CONTROL_PORT = 4788;
-const CORE_CONTROL_PORT = 4790;
-const HTTP_PROXY_PORT = 4780;
-const SOCKS_PROXY_PORT = 4781;
+const DEFAULT_PORT_BASE = 4780;
+// 端口组运行时值，从 ~/.config/SilverVPN/server.json 的 config.ports 加载（与 CLI 共享）
+let PUBLIC_CONTROL_PORT = 4788;
+let CORE_CONTROL_PORT = 4790;
+let HTTP_PROXY_PORT = 4780;
+let SOCKS_PROXY_PORT = 4781;
 const DEFAULT_DELAY_TEST_URL = 'https://www.gstatic.com/generate_204';
 const CORE_START_TIMEOUT_MS = 20000;
 const TUN_DEVICE = 'silvervpn0';
@@ -34,6 +36,9 @@ const TUN_CORE_PATH = '/usr/local/libexec/silvervpn/mihomo';
 const TUN_ROUTE_TABLE = 20229;
 const TUN_RULE_INDEX = 19000;
 const LOCAL_API_KEY = 'RocketMaker';
+const UPDATE_REPOSITORY = 'Silver-Zhang/SilverVPN';
+const UPDATE_API_URL = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`;
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const MODE_ALIASES = {
   rule: 'Rule',
   smart: 'Rule',
@@ -81,6 +86,7 @@ let tray = null;
 let compatServer = null;
 let coreProcess = null;
 let corePath = null;
+let externalCoreRunning = false;
 let isQuitting = false;
 let shutdownInProgress = false;
 
@@ -97,8 +103,95 @@ let settings = {
   currentSelector: 'Proxy',
   currentProxy: '',
   coreApiSecret: '',
+  theme: 'vision',
+  bgImage: '',
+  glassOpacity: 0.9,
+  particlesEnabled: true,
+  particlesIntensity: 0.6,
+  monitorCollapsed: false,
+  trafficCollapsed: false,
+  lastUpdateCheckAt: '',
+  dismissedUpdateVersion: '',
   alert: false
 };
+
+function normalizeVersion(value) {
+  return String(value || '').trim().replace(/^v/i, '').split(/[+-]/)[0];
+}
+
+function compareVersions(left, right) {
+  const leftParts = normalizeVersion(left).split('.').map(part => Number(part) || 0);
+  const rightParts = normalizeVersion(right).split('.').map(part => Number(part) || 0);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (difference) return difference;
+  }
+  return 0;
+}
+
+function requestJson(url) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': `${APP_NAME}/${app.getVersion()}`
+      },
+      timeout: 10000
+    }, response => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => {
+        if (response.statusCode !== 200) {
+          reject(new Error(`Update check returned HTTP ${response.statusCode}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(body));
+        } catch (_error) {
+          reject(new Error('Update service returned invalid JSON.'));
+        }
+      });
+    });
+    request.on('timeout', () => request.destroy(new Error('Update check timed out.')));
+    request.on('error', reject);
+  });
+}
+
+async function checkForUpdate(options = {}) {
+  const checkedAt = Date.now();
+  if (!options.force && settings.lastUpdateCheckAt && checkedAt - Date.parse(settings.lastUpdateCheckAt) < UPDATE_CHECK_INTERVAL_MS) {
+    return { checked: false, skipped: true, currentVersion: app.getVersion() };
+  }
+  const release = await requestJson(UPDATE_API_URL);
+  const latestVersion = normalizeVersion(release.tag_name);
+  if (!latestVersion) throw new Error('Update service did not provide a version.');
+  settings.lastUpdateCheckAt = new Date(checkedAt).toISOString();
+  saveSettings();
+  return {
+    checked: true,
+    currentVersion: app.getVersion(),
+    latestVersion,
+    available: compareVersions(latestVersion, app.getVersion()) > 0,
+    dismissed: settings.dismissedUpdateVersion === latestVersion,
+    publishedAt: release.published_at || '',
+    releaseNotes: String(release.body || '').slice(0, 6000),
+    releaseUrl: release.html_url || `https://github.com/${UPDATE_REPOSITORY}/releases/latest`
+  };
+}
+
+async function installUpdate() {
+  const script = path.join(__dirname, 'scripts', 'update.sh');
+  if (!fs.existsSync(script)) throw new Error('Update script is unavailable in this installation.');
+  await runCapture('bash', [script]);
+  setTimeout(() => {
+    isQuitting = true;
+    app.relaunch();
+    app.exit(0);
+  }, 250);
+  return { ok: true, restartRequired: true };
+}
 
 function resolveRuntimePaths() {
   const userData = app.getPath('userData');
@@ -114,7 +207,8 @@ function resolveRuntimePaths() {
     clashyConfigDir: path.join(userData, 'clashy-configs'),
     subscriptionsDir: path.join(userData, 'subscriptions'),
     logsDir: path.join(userData, 'logs'),
-    settingsFile: path.join(userData, 'clashy-configs', 'settings.json'),
+    settingsFile: path.join(userData, 'settings.json'),
+    serverFile: path.join(userData, 'server.json'),
     subscriptionsFile: path.join(userData, 'clashy-configs', 'subscriptions.json'),
     shellProxyFile: path.join(userData, 'shell-proxy.sh'),
     activeConfigFile: path.join(userData, 'clash-configs', 'config.yaml'),
@@ -168,6 +262,76 @@ function writeJson(file, value) {
   fs.writeFileSync(file, JSON.stringify(value, null, 2));
 }
 
+/* ---------- 端口组（与 CLI server.json 共享） ---------- */
+const PORT_BASE_MIN = 1024;
+const PORT_GROUP_RULES = { socks: 1, service: 8, core: 10 };
+
+function portsFromBase(base) {
+  return {
+    http: base,
+    socks: base + PORT_GROUP_RULES.socks,
+    service: base + PORT_GROUP_RULES.service,
+    core: base + PORT_GROUP_RULES.core
+  };
+}
+
+function normalizePortGroup(value) {
+  const base = Number(value);
+  if (!Number.isInteger(base) || base < PORT_BASE_MIN || base + 10 > 65535) {
+    throw new Error(`无效的端口基础值：${value}（需为 ${PORT_BASE_MIN}-${65535 - 10} 的整数）`);
+  }
+  return portsFromBase(base);
+}
+
+function readPortConfig() {
+  const config = readJson(runtime.serverFile, {});
+  // 统一 schema：顶层 config.ports；旧版 config.config.ports 一次性迁移
+  const legacy = config && config.config && config.config.ports;
+  if (legacy && !(config.ports && config.ports.http)) {
+    config.ports = legacy;
+    delete config.config.ports;
+    if (!Object.keys(config.config).length) {
+      delete config.config;
+    }
+    writeJson(runtime.serverFile, config);
+  }
+  const ports = config.ports;
+  if (
+    ports &&
+    Number.isInteger(ports.http) &&
+    Number.isInteger(ports.socks) &&
+    Number.isInteger(ports.service) &&
+    Number.isInteger(ports.core) &&
+    ports.http >= PORT_BASE_MIN &&
+    ports.http + 10 <= 65535
+  ) {
+    return portsFromBase(ports.http);
+  }
+  return null;
+}
+
+function savePortConfig(base) {
+  const ports = normalizePortGroup(base);
+  const config = readJson(runtime.serverFile, {});
+  config.ports = ports;
+  if (config.config && config.config.ports) {
+    delete config.config.ports;
+    if (!Object.keys(config.config).length) {
+      delete config.config;
+    }
+  }
+  writeJson(runtime.serverFile, config);
+  return ports;
+}
+
+function applyPortSet(ports) {
+  HTTP_PROXY_PORT = ports.http;
+  SOCKS_PROXY_PORT = ports.socks;
+  PUBLIC_CONTROL_PORT = ports.service;
+  CORE_CONTROL_PORT = ports.core;
+  updateGlobals();
+}
+
 function userDataHasRealConfig(targetUserData) {
   const file = path.join(targetUserData, 'clash-configs', 'config.yaml');
   if (!fs.existsSync(file)) {
@@ -189,6 +353,26 @@ function migrateLegacyUserData(targetUserData) {
       return;
     }
   }
+}
+
+function migrateLegacyGuiSettings() {
+  const legacyFile = path.join(runtime.clashyConfigDir, 'settings.json');
+  if (!fs.existsSync(legacyFile)) {
+    return;
+  }
+  const validSecret = value => /^[a-f0-9]{64}$/i.test(String(value || ''));
+  const current = readJson(runtime.settingsFile, {});
+  const legacy = readJson(legacyFile, {});
+  const merged = { ...legacy, ...current };
+  if (validSecret(legacy.coreApiSecret)) {
+    // legacy 文件存在说明 GUI 尚未迁移过：若旧 GUI 核心仍在运行，它使用的必然是
+    // legacy secret，必须保留它，否则迁移后 GUI 探测/复用该核心会因鉴权脱节失败。
+    merged.coreApiSecret = legacy.coreApiSecret;
+  }
+  writeJson(runtime.settingsFile, merged);
+  fs.copyFileSync(legacyFile, `${legacyFile}.gui-migrated`);
+  fs.rmSync(legacyFile);
+  appendCoreLog(`[${new Date().toISOString()}] migrated legacy GUI settings into shared settings.json\n`);
 }
 
 function normalizeBypassHosts(values) {
@@ -268,6 +452,7 @@ function initializeFilesystem() {
   if (!fs.existsSync(runtime.subscriptionsFile)) {
     writeJson(runtime.subscriptionsFile, { subscriptions: [] });
   }
+  migrateLegacyGuiSettings();
   settings = {
     ...settings,
     ...readJson(runtime.settingsFile, {})
@@ -284,6 +469,8 @@ function initializeFilesystem() {
 }
 
 function saveSettings() {
+  const onDisk = readJson(runtime.settingsFile, {});
+  settings = { ...onDisk, ...settings };
   writeJson(runtime.settingsFile, settings);
   updateGlobals();
 }
@@ -375,7 +562,7 @@ function normalizeProxyMode(value) {
 }
 
 function coreIsRunning() {
-  return Boolean(coreProcess && !coreProcess.killed);
+  return Boolean((coreProcess && !coreProcess.killed) || externalCoreRunning);
 }
 
 function readTail(file, maxBytes = 12000) {
@@ -1033,12 +1220,76 @@ async function waitForCore(timeoutMs) {
   return false;
 }
 
+async function probeExternalCore() {
+  return new Promise(resolve => {
+    const request = http.request(
+      {
+        hostname: CONTROL_HOST,
+        port: CORE_CONTROL_PORT,
+        path: '/configs',
+        method: 'GET',
+        timeout: 1500,
+        headers: settings.coreApiSecret
+          ? { Authorization: `Bearer ${settings.coreApiSecret}` }
+          : {}
+      },
+      response => {
+        let raw = '';
+        response.setEncoding('utf8');
+        response.on('data', chunk => {
+          raw += chunk;
+        });
+        response.on('end', () => {
+          if (response.statusCode !== 200) {
+            resolve(false);
+            return;
+          }
+          try {
+            const value = raw ? JSON.parse(raw) : null;
+            resolve(Boolean(value && Number(value.port) === HTTP_PROXY_PORT));
+          } catch (_error) {
+            resolve(false);
+          }
+        });
+      }
+    );
+    request.on('timeout', () => {
+      request.destroy();
+      resolve(false);
+    });
+    request.on('error', () => resolve(false));
+    request.end();
+  });
+}
+
+async function refreshExternalCoreState() {
+  if (coreProcess && !coreProcess.killed) {
+    externalCoreRunning = false;
+    return;
+  }
+  externalCoreRunning = await probeExternalCore();
+}
+
 async function startCore() {
   if (coreProcess && !coreProcess.killed) {
     return true;
   }
 
   const tunMode = Boolean(settings.tunEnabled);
+  if (!tunMode && (await probeExternalCore())) {
+    externalCoreRunning = true;
+    corePath = findCoreBinary() || '';
+    appendCoreLog(`[${new Date().toISOString()}] reusing externally managed core (e.g. svpn CLI or another instance).\n`);
+    return true;
+  }
+  if (!tunMode) {
+    const others = getCurrentUserMihomoProcesses();
+    if (others.length) {
+      appendCoreLog(
+        `[${new Date().toISOString()}] warning: another mihomo core of this user is already running (PID ${others.join(', ')}) on a different port group; GUI and CLI cores may overwrite each other's runtime config.\n`
+      );
+    }
+  }
   if (tunMode) {
     const tunStatus = getTunStatus();
     if (!tunStatus.available) {
@@ -1092,6 +1343,11 @@ async function startCore() {
 }
 
 function stopCore() {
+  if (externalCoreRunning) {
+    externalCoreRunning = false;
+    coreProcess = null;
+    return;
+  }
   if (coreProcess && !coreProcess.killed) {
     coreProcess.kill('SIGTERM');
   }
@@ -1127,6 +1383,11 @@ async function restoreCoreSelection() {
 }
 
 async function stopCoreAndWait(timeoutMs = 4000) {
+  if (externalCoreRunning) {
+    externalCoreRunning = false;
+    coreProcess = null;
+    return;
+  }
   const child = coreProcess;
   if (!child || child.killed) {
     coreProcess = null;
@@ -1155,6 +1416,20 @@ async function stopCoreAndWait(timeoutMs = 4000) {
 }
 
 async function restartCore() {
+  if (externalCoreRunning) {
+    try {
+      prepareRuntimeConfig({ tunEnabled: false });
+      await requestCore('/configs?force=true', {
+        method: 'PUT',
+        body: { path: runtime.runtimeConfigFile }
+      });
+      await restoreCoreSelection();
+      return true;
+    } catch (error) {
+      appendCoreLog(`[${new Date().toISOString()}] external core reload failed: ${error.message}\n`);
+      return false;
+    }
+  }
   await stopCoreAndWait();
   return startCore();
 }
@@ -1681,6 +1956,56 @@ async function switchProfileFromGui(payload = {}) {
   return buildDashboard();
 }
 
+function assertProfileFileInsideDir(fileName) {
+  const resolved = path.resolve(String(fileName || ''));
+  const dir = `${path.resolve(runtime.subscriptionsDir)}${path.sep}`;
+  if (resolved !== path.resolve(runtime.subscriptionsDir) && !resolved.startsWith(dir)) {
+    throw new Error('配置方案文件不在订阅目录内，拒绝操作。');
+  }
+  return resolved;
+}
+
+async function renameProfileFromGui(payload = {}) {
+  const profile = findProfile(payload.id || payload.fileName);
+  const name = String(payload.name || '').trim();
+  if (!profile) {
+    throw new Error(settings.language === 'en' ? 'Profile to rename not found.' : '未找到要重命名的配置方案。');
+  }
+  if (!name) {
+    throw new Error(settings.language === 'en' ? 'Please enter a profile name.' : '请输入配置方案名称。');
+  }
+  const profiles = readProfiles();
+  const target = profiles.find(item => item.id === profile.id || item.fileName === profile.fileName);
+  if (!target) {
+    throw new Error(settings.language === 'en' ? 'Profile to rename not found.' : '未找到要重命名的配置方案。');
+  }
+  target.name = name.slice(0, 120);
+  writeProfiles(profiles);
+  if (settings.currentProfileId === profile.id) {
+    settings.currentProfile = profile.fileName;
+    saveSettings();
+  }
+  return buildDashboard();
+}
+
+async function deleteProfileFromGui(payload = {}) {
+  const profile = findProfile(payload.id || payload.fileName);
+  if (!profile) {
+    throw new Error(settings.language === 'en' ? 'Profile to delete not found.' : '未找到要删除的配置方案。');
+  }
+  if (profile.id === settings.currentProfileId || path.resolve(profile.fileName) === path.resolve(settings.currentProfile || '')) {
+    throw new Error(settings.language === 'en' ? 'Cannot delete the profile currently in use. Switch to another profile first.' : '不能删除当前正在使用的方案，请先切换到其他方案。');
+  }
+  assertProfileFileInsideDir(profile.fileName);
+  const fileName = path.resolve(profile.fileName);
+  const profiles = readProfiles().filter(item => item.id !== profile.id && path.resolve(item.fileName) !== fileName);
+  writeProfiles(profiles);
+  if (fs.existsSync(fileName)) {
+    fs.rmSync(fileName, { force: true });
+  }
+  return buildDashboard();
+}
+
 async function importConfigFile() {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '导入 Clash 配置文件',
@@ -1747,20 +2072,14 @@ function localUserInfo() {
 function sendJson(response, status, value) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    'Content-Type': 'application/json; charset=utf-8'
   });
   response.end(body);
 }
 
 function sendText(response, status, value, contentType = 'text/plain; charset=utf-8') {
   response.writeHead(status, {
-    'Content-Type': contentType,
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    'Content-Type': contentType
   });
   response.end(value);
 }
@@ -1853,12 +2172,7 @@ function proxyToCore(request, response) {
   };
 
   const upstream = http.request(options, upstreamResponse => {
-    response.writeHead(upstreamResponse.statusCode || 502, {
-      ...upstreamResponse.headers,
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
-    });
+    response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
     upstreamResponse.pipe(response);
   });
 
@@ -1889,13 +2203,17 @@ function proxyToCore(request, response) {
 async function handleCompatRequest(request, response) {
   const parsed = new URL(request.url, `http://${CONTROL_HOST}:${PUBLIC_CONTROL_PORT}`);
   const origin = String(request.headers.origin || '');
-  const originAllowed =
-    !origin ||
-    origin === 'null' ||
-    /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(origin);
-  if (!originAllowed) {
+  // 只允许本机 http(s) 页面跨域访问；拒绝 Origin: null（file://、沙盒页面等），
+  // 防止恶意本地 HTML 在浏览器中操作 Core Controller。
+  const originAllowed = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(origin);
+  if (!originAllowed && origin) {
     sendJson(response, 403, { message: 'Origin is not allowed.' });
     return;
+  }
+  if (origin) {
+    response.setHeader('Access-Control-Allow-Origin', origin);
+    response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   }
 
   if (request.method === 'OPTIONS') {
@@ -2057,6 +2375,8 @@ function buildAccountSummary() {
 }
 
 async function buildDashboard() {
+  settings = { ...settings, ...readJson(runtime.settingsFile, {}) };
+  await refreshExternalCoreState();
   const configs = await readCoreConfigs();
   const normalizedMode = normalizeStoredMode(configs.mode);
   const proxiesResponse = await readCoreProxies();
@@ -2071,6 +2391,7 @@ async function buildDashboard() {
     appName: APP_NAME,
     core: {
       running: coreIsRunning(),
+      externallyManaged: Boolean(externalCoreRunning),
       binary: corePath || findCoreBinary() || '',
       control: `http://${CONTROL_HOST}:${PUBLIC_CONTROL_PORT}`,
       coreControl: `http://${CONTROL_HOST}:${CORE_CONTROL_PORT}`,
@@ -2081,6 +2402,9 @@ async function buildDashboard() {
       activeConfigFile: runtime.activeConfigFile,
       httpPort: Number(configs.port || HTTP_PROXY_PORT),
       socksPort: Number(configs['socks-port'] || SOCKS_PROXY_PORT),
+      apiPort: PUBLIC_CONTROL_PORT,
+      corePort: CORE_CONTROL_PORT,
+      portBase: HTTP_PROXY_PORT,
       mode: normalizedMode,
       modeLabel: MODE_LABELS[normalizedMode] || normalizedMode
     },
@@ -2090,6 +2414,13 @@ async function buildDashboard() {
       startWithSystem: Boolean(settings.startWithSystem),
       holdProxy: Boolean(settings.holdProxy),
       language: settings.language || 'zh-CN',
+      theme: settings.theme || 'vision',
+      bgImage: settings.bgImage || '',
+      glassOpacity: typeof settings.glassOpacity === 'number' ? settings.glassOpacity : 0.9,
+      particlesEnabled: settings.particlesEnabled !== false,
+      particlesIntensity: typeof settings.particlesIntensity === 'number' ? settings.particlesIntensity : 0.6,
+      monitorCollapsed: Boolean(settings.monitorCollapsed),
+      trafficCollapsed: Boolean(settings.trafficCollapsed),
       defaultBypassHosts: DEFAULT_BYPASS_HOSTS,
       bypassHosts: normalizeBypassHosts(settings.bypassHosts || []),
       currentProfile: settings.currentProfile || '',
@@ -2146,7 +2477,20 @@ async function setBypassHostsFromGui(payload = {}) {
   if (settings.systemProxy) {
     await setGnomeProxy(true);
   }
-  await restartCore();
+  if (settings.tunEnabled) {
+    await restartCore();
+  } else if (coreIsRunning()) {
+    try {
+      prepareRuntimeConfig({ tunEnabled: false });
+      await requestCore('/configs?force=true', {
+        method: 'PUT',
+        body: { path: runtime.runtimeConfigFile }
+      });
+      await restoreCoreSelection();
+    } catch (error) {
+      throw new Error(`绕过列表已保存，但应用失败：${error.message}`);
+    }
+  }
   return buildDashboard();
 }
 
@@ -2155,6 +2499,80 @@ function setLanguageFromGui(payload = {}) {
   settings.language = language;
   saveSettings();
   return buildDashboard();
+}
+
+function setAppearanceFromGui(payload = {}) {
+  const themes = ['vision', 'midnight', 'aurora', 'light', 'ember', 'day', 'sunrise'];
+  if (themes.includes(payload.theme)) {
+    settings.theme = payload.theme;
+  }
+  if (typeof payload.bgImage === 'string') {
+    settings.bgImage = payload.bgImage;
+  }
+  if (typeof payload.glassOpacity === 'number') {
+    settings.glassOpacity = Math.min(1, Math.max(0.55, payload.glassOpacity));
+  }
+  if (typeof payload.particlesEnabled === 'boolean') {
+    settings.particlesEnabled = payload.particlesEnabled;
+  }
+  if (typeof payload.particlesIntensity === 'number') {
+    settings.particlesIntensity = Math.min(1, Math.max(0.1, payload.particlesIntensity));
+  }
+  if (typeof payload.monitorCollapsed === 'boolean') {
+    settings.monitorCollapsed = payload.monitorCollapsed;
+  }
+  if (typeof payload.trafficCollapsed === 'boolean') {
+    settings.trafficCollapsed = payload.trafficCollapsed;
+  }
+  saveSettings();
+  return buildDashboard();
+}
+
+function portGroupListening(ports) {
+  const output = captureSync('ss', ['-H', '-ltn']);
+  if (!output) {
+    return false;
+  }
+  const lines = output.split(/\r?\n/);
+  return [ports.http, ports.socks, ports.service, ports.core].some(port =>
+    lines.some(line => new RegExp(`[:.]${port}\\b`).test(line))
+  );
+}
+
+async function setPortsFromGui(payload = {}) {
+  const ports = normalizePortGroup(payload.base);
+  const current = {
+    http: HTTP_PROXY_PORT,
+    socks: SOCKS_PROXY_PORT,
+    service: PUBLIC_CONTROL_PORT,
+    core: CORE_CONTROL_PORT
+  };
+  const unchanged =
+    ports.http === current.http &&
+    ports.socks === current.socks &&
+    ports.service === current.service &&
+    ports.core === current.core;
+  if (!unchanged && portGroupListening(ports)) {
+    throw new Error(settings.language === 'en'
+      ? `Port group is in use: HTTP ${ports.http} / SOCKS ${ports.socks} / API ${ports.service} / Core ${ports.core}. Choose another base port.`
+      : `端口组被占用：HTTP ${ports.http} / SOCKS ${ports.socks} / API ${ports.service} / Core ${ports.core}。请换一个基础端口。`);
+  }
+  savePortConfig(ports.http);
+  applyPortSet(ports);
+  if (!unchanged) {
+    stopCompatServer();
+    startCompatServer();
+    if (coreIsRunning()) {
+      await restartCore();
+    }
+  }
+  return {
+    ok: true,
+    message: settings.language === 'en'
+      ? `Ports updated: HTTP ${ports.http} / SOCKS ${ports.socks} / API ${ports.service} / Core ${ports.core}`
+      : `端口已更新：HTTP ${ports.http} / SOCKS ${ports.socks} / API ${ports.service} / Core ${ports.core}`,
+    dashboard: await buildDashboard()
+  };
 }
 
 async function importSourceFromGui(source) {
@@ -2337,6 +2755,21 @@ function captureSync(command, args) {
   return result.status === 0 ? String(result.stdout || '').trim() : '';
 }
 
+function getCurrentUserMihomoProcesses() {
+  const output = captureSync('ps', ['-eo', 'pid=,uid=,args=']);
+  if (!output) {
+    return [];
+  }
+  const uid = typeof process.getuid === 'function' ? String(process.getuid()) : '';
+  return output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => /mihomo/i.test(line))
+    .filter(line => !uid || line.split(/\s+/)[1] === uid)
+    .map(line => Number(line.split(/\s+/)[0]))
+    .filter(pid => Number.isInteger(pid) && pid > 0);
+}
+
 function stripGsettingsValue(value) {
   return String(value || '').trim().replace(/^['"]|['"]$/g, '');
 }
@@ -2492,6 +2925,183 @@ async function getNetworkStatusFromGui() {
   };
 }
 
+let trafficTracker = null;
+let lastConnSamplingAt = 0;
+
+function trafficDateKey(offsetDays = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() - offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
+function pruneTrafficDates() {
+  if (!trafficTracker) {
+    return;
+  }
+  const keys = Object.keys(trafficTracker.byDate).sort();
+  while (keys.length > 31) {
+    delete trafficTracker.byDate[keys.shift()];
+    trafficTracker.dirty = true;
+  }
+}
+
+function initTrafficTracker() {
+  const file = path.join(runtime.userData, 'traffic-stats.json');
+  const data = readJson(file, {});
+  trafficTracker = {
+    file,
+    byDate: data.byDate && typeof data.byDate === 'object' ? data.byDate : {},
+    connBaseline: {},
+    lastFlush: Date.now(),
+    dirty: false
+  };
+  pruneTrafficDates();
+}
+
+function flushTrafficStats(force = false) {
+  if (!trafficTracker || (!trafficTracker.dirty && !force)) {
+    return;
+  }
+  pruneTrafficDates();
+  writeJson(trafficTracker.file, { byDate: trafficTracker.byDate });
+  trafficTracker.dirty = false;
+  trafficTracker.lastFlush = Date.now();
+}
+
+async function accumulateTrafficConnections() {
+  if (!trafficTracker) {
+    return;
+  }
+  if (Date.now() - lastConnSamplingAt < 10000) {
+    return;
+  }
+  lastConnSamplingAt = Date.now();
+  try {
+    const value = await requestCore('/connections');
+    const connections = Array.isArray(value.connections) ? value.connections : [];
+    const seen = new Set();
+    const date = trafficDateKey(0);
+    const day = trafficTracker.byDate[date] || (trafficTracker.byDate[date] = {});
+    for (const conn of connections) {
+      const node = (Array.isArray(conn.chains) && conn.chains[0]) || '未知';
+      const id = String(conn.id || `${conn.metadata && conn.metadata.host || ''}:${conn.metadata && conn.metadata.destinationPort || ''}`);
+      seen.add(id);
+      const up = Number(conn.upload) || 0;
+      const down = Number(conn.download) || 0;
+      const prev = trafficTracker.connBaseline[id];
+      if (prev && prev.node === node) {
+        if (up >= prev.up && down >= prev.down) {
+          const entry = day[node] || (day[node] = { up: 0, down: 0 });
+          entry.up += up - prev.up;
+          entry.down += down - prev.down;
+          trafficTracker.dirty = true;
+        }
+      }
+      trafficTracker.connBaseline[id] = { node, up, down };
+    }
+    for (const id of Object.keys(trafficTracker.connBaseline)) {
+      if (!seen.has(id)) {
+        delete trafficTracker.connBaseline[id];
+      }
+    }
+    pruneTrafficDates();
+    if (Date.now() - trafficTracker.lastFlush > 60000) {
+      flushTrafficStats();
+    }
+  } catch (_error) {
+    // core not running; snapshot will catch up next time
+  }
+}
+
+function sumTrafficWindow(dayEntry, windows) {
+  const out = { up: 0, down: 0 };
+  for (const date of windows) {
+    const entry = (trafficTracker.byDate[date] || {})[dayEntry];
+    if (entry) {
+      out.up += Number(entry.up) || 0;
+      out.down += Number(entry.down) || 0;
+    }
+  }
+  return out;
+}
+
+function getTrafficStats() {
+  const empty = () => ({ up: 0, down: 0 });
+  if (!trafficTracker) {
+    return { ranges: { today: empty(), d3: empty(), d7: empty(), d30: empty() }, nodes: [] };
+  }
+  const todayKey = trafficDateKey(0);
+  const windows = {
+    today: [trafficDateKey(0)],
+    d3: [0, 1, 2].map(trafficDateKey),
+    d7: [0, 1, 2, 3, 4, 5, 6].map(trafficDateKey),
+    d30: Array.from({ length: 30 }, (_, index) => trafficDateKey(index))
+  };
+  const nodesMap = {};
+  for (const node of Object.keys(trafficTracker.byDate[todayKey] || {})) {
+    if (node === '__total__') continue;
+    const entry = nodesMap[node] || (nodesMap[node] = { today: empty(), d3: empty(), d7: empty(), d30: empty() });
+    entry.today = sumTrafficWindow(node, windows.today);
+    entry.d3 = sumTrafficWindow(node, windows.d3);
+    entry.d7 = sumTrafficWindow(node, windows.d7);
+    entry.d30 = sumTrafficWindow(node, windows.d30);
+  }
+  const nodes = Object.entries(nodesMap)
+    .map(([name, value]) => ({ name, ...value }))
+    .sort((left, right) => (right.d30.up + right.d30.down) - (left.d30.up + left.d30.down));
+  const ranges = {};
+  for (const key of Object.keys(windows)) {
+    const total = empty();
+    for (const date of windows[key]) {
+      const day = trafficTracker.byDate[date] || {};
+      for (const value of Object.values(day)) {
+        total.up += Number(value.up) || 0;
+        total.down += Number(value.down) || 0;
+      }
+    }
+    ranges[key] = total;
+  }
+  return { ranges, nodes };
+}
+
+async function monitorStatsFromGui() {
+  const stats = { up: 0, down: 0, connections: 0, delay: null, inactive: true };
+  try {
+    const traffic = await requestCore('/traffic');
+    stats.up = Number(traffic.up) || 0;
+    stats.down = Number(traffic.down) || 0;
+  } catch (_error) {
+    return stats;
+  }
+  try {
+    const connections = await requestCore('/connections');
+    stats.connections = Array.isArray(connections.connections) ? connections.connections.length : 0;
+    stats.inactive = false;
+  } catch (_error) {
+    stats.inactive = false;
+  }
+  accumulateTrafficConnections().catch(() => {});
+  return stats;
+}
+
+async function monitorDelayFromGui() {
+  try {
+    const proxiesResponse = await readCoreProxies();
+    const mode = normalizeStoredMode((await readCoreConfigs()).mode);
+    const selectorName = pickSelectorName(proxiesResponse, mode);
+    const selector = ((proxiesResponse && proxiesResponse.proxies) || {})[selectorName] || {};
+    const node = selector.now || '';
+    if (!node) {
+      return { delay: null };
+    }
+    const values = await checkDelay([node]);
+    const delay = Number.isFinite(values[0] && values[0].delay) ? values[0].delay : null;
+    return { delay, node };
+  } catch (_error) {
+    return { delay: null };
+  }
+}
+
 function testTcpFromGui(payload = {}) {
   const host = String(payload.host || '').trim();
   const port = Number(payload.port || 22);
@@ -2560,8 +3170,16 @@ async function handleGuiAction(action, payload = {}) {
       return setBypassHostsFromGui(payload);
     case 'set-language':
       return setLanguageFromGui(payload);
+    case 'set-appearance':
+      return setAppearanceFromGui(payload);
+    case 'set-ports':
+      return setPortsFromGui(payload);
     case 'switch-profile':
       return switchProfileFromGui(payload);
+    case 'rename-profile':
+      return renameProfileFromGui(payload);
+    case 'delete-profile':
+      return deleteProfileFromGui(payload);
     case 'import-source':
       return importSourceFromGui(payload.source);
     case 'import-file':
@@ -2576,8 +3194,24 @@ async function handleGuiAction(action, payload = {}) {
       return detectIpFromGui();
     case 'network-status':
       return getNetworkStatusFromGui();
+    case 'monitor-stats':
+      return monitorStatsFromGui();
+    case 'monitor-delay':
+      return monitorDelayFromGui();
+    case 'traffic-stats':
+      return getTrafficStats();
     case 'test-tcp':
       return testTcpFromGui(payload);
+    case 'check-update':
+      return checkForUpdate({ force: true });
+    case 'install-update': {
+      const result = await installUpdate();
+      return result;
+    }
+    case 'dismiss-update':
+      settings.dismissedUpdateVersion = String(payload.version || '');
+      saveSettings();
+      return { ok: true };
     case 'open-config-dir':
       await shell.openPath(runtime.clashConfigDir);
       return { ok: true };
@@ -2626,7 +3260,7 @@ async function routeIpcMessage(message) {
       data.subscriptions = (data.subscriptions || []).filter(item => item.fileName !== fileName);
       writeSubscriptions(data);
       if (fileName && fs.existsSync(fileName)) {
-        fs.unlinkSync(fileName);
+        fs.rmSync(fileName, { force: true });
       }
       return null;
     }
@@ -2821,6 +3455,7 @@ function createWindow() {
 async function bootstrap() {
   app.setName(APP_NAME);
   initializeFilesystem();
+  initTrafficTracker();
   settings.systemProxy = false;
   settings.tunEnabled = false;
   writeShellProxyState(false);
@@ -2828,6 +3463,14 @@ async function bootstrap() {
   saveSettings();
   if (getGnomeProxyStatus().ownedBySilverVPN) {
     await setGnomeProxy(false);
+  }
+  // 与 CLI 共享的端口组：读取 server.json config.ports
+  const storedPorts = readPortConfig();
+  if (storedPorts) {
+    applyPortSet(storedPorts);
+  } else {
+    savePortConfig(DEFAULT_PORT_BASE);
+    applyPortSet(portsFromBase(DEFAULT_PORT_BASE));
   }
   updateGlobals();
   installIpcBridge();
@@ -2852,6 +3495,7 @@ app.on('activate', () => {
 
 app.on('before-quit', event => {
   isQuitting = true;
+  flushTrafficStats(true);
   if (!shutdownInProgress && settings.tunEnabled) {
     event.preventDefault();
     shutdownInProgress = true;
