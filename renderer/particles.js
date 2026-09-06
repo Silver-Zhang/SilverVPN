@@ -96,16 +96,22 @@
     }
   }
 
-  // 从核心向外“吐”一个粒子（释放动画）
+  // 从核心向外“吐”一个粒子（释放动画：旋转螺旋喷出）
   function emitParticle(speed) {
     const angle = Math.random() * Math.PI * 2;
     const radius = HUD_CATCH_RADIUS + 6 + Math.random() * 10;
-    const velocity = speed * (3.4 + Math.random() * 1.2);
+    const radial = speed * (3.0 + Math.random() * 1.0);
+    const tangential = radial * 0.85;
+    const spin = Math.random() < 0.5 ? -1 : 1;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    // 径向 + 切向合成初速：螺旋向外，且保留旋转方向（惯性）
     const particle = {
-      x: hud.x + Math.cos(angle) * radius,
-      y: hud.y + Math.sin(angle) * radius,
-      vx: Math.cos(angle) * velocity,
-      vy: Math.sin(angle) * velocity
+      x: hud.x + cos * radius,
+      y: hud.y + sin * radius,
+      vx: cos * radial - sin * tangential * spin,
+      vy: sin * radial + cos * tangential * spin,
+      spin
     };
     particles.push(particle);
   }
@@ -300,16 +306,23 @@
             core.mode = 'off';
           }
         } else if (core.mode === 'releasing') {
-          // 开启：粒子从核心吐出（绿色），向外吹远，不被吸回
+          // 开启：粒子从核心螺旋喷出（旋转 + 向外），有惯性
           const hdist = Math.hypot(hdx, hdy);
           if (hdist > 1) {
-            // 越靠近核心越强向外吹（背离核心方向），让粒子快速喷离，形成爆发感
+            // 向外吹（背离核心）：近核强、远核弱
             const blow = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 1.6));
-            particle.vx -= normX * blow * 0.85;
-            particle.vy -= normY * blow * 0.85;
+            particle.vx -= normX * blow * 0.8;
+            particle.vy -= normY * blow * 0.8;
+            // 切向涡流：沿各自旋转方向持续加速，形成螺旋
+            const spinFalloff = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 2.2));
+            const spinForce = blow * 0.9 + spinFalloff * 0.18;
+            const s = particle.spin || (Math.random() < 0.5 ? -1 : 1);
+            particle.spin = s;
+            particle.vx += -normY * spinForce * s;
+            particle.vy += normX * spinForce * s;
           }
-          particle.vx *= 0.972;
-          particle.vy *= 0.972;
+          particle.vx *= 0.976;
+          particle.vy *= 0.976;
         } else if (core.mode === 'on') {
           // 运行：慢速吸积 + 星环（粒子绕核心旋转，不急着被吸）
           if (hdist < HUD_CATCH_RADIUS + p.radius) {
