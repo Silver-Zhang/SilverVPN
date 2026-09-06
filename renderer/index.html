@@ -50,6 +50,12 @@
       </section>
 
       <section class="kpi-row">
+        <div class="kpi-card">
+          <span class="kpi-icon" aria-hidden="true">⊕</span>
+          <span class="kpi-label" data-i18n="kpiNodesLabel">节点</span>
+          <span id="proxyCount" class="kpi-value">0</span>
+          <span class="kpi-foot" data-i18n="kpiNodesFoot">当前配置可用节点</span>
+        </div>
         <div id="kpiCoreCard" class="kpi-card">
           <span class="kpi-icon" aria-hidden="true">◉</span>
           <span class="kpi-hud" aria-hidden="true">
@@ -61,12 +67,6 @@
           <span class="kpi-label" data-i18n="kpiCoreLabel">核心状态</span>
           <span id="kpiCore" class="kpi-value dim">读取中</span>
           <span class="kpi-foot" data-i18n="kpiCoreFoot">mihomo 运行状态</span>
-        </div>
-        <div class="kpi-card">
-          <span class="kpi-icon" aria-hidden="true">⊕</span>
-          <span class="kpi-label" data-i18n="kpiNodesLabel">节点</span>
-          <span id="proxyCount" class="kpi-value">0</span>
-          <span class="kpi-foot" data-i18n="kpiNodesFoot">当前配置可用节点</span>
         </div>
         <div class="kpi-card">
           <span class="kpi-icon" aria-hidden="true">⇄</span>
@@ -83,84 +83,6 @@
       </section>
 
       <section class="workspace">
-        <section class="panel monitor-panel span-12" aria-labelledby="monitorTitle">
-          <div class="panel-title-row">
-            <h2 id="monitorTitle" data-i18n="monitorTitle">实时监控</h2>
-            <button id="toggleMonitor" class="icon-button" title="折叠/展开" type="button" data-i18n-title="collapseTitle">▾</button>
-          </div>
-          <div id="monitorBody" class="monitor-grid">
-            <div class="monitor-cell">
-              <div class="monitor-head">
-                <span data-i18n="monitorTraffic">流量</span>
-                <span id="trafficValue" class="monitor-value">0 ↓ / 0 ↑ B/s</span>
-              </div>
-              <svg class="sparkline" viewBox="0 0 240 64" preserveAspectRatio="none" aria-hidden="true">
-                <polyline id="sparkDown" class="spark-line spark-down" points="" />
-                <polyline id="sparkUp" class="spark-line spark-up" points="" />
-              </svg>
-            </div>
-            <div class="monitor-cell">
-              <div class="monitor-head">
-                <span data-i18n="monitorDelay">当前延迟</span>
-                <span id="delayValue" class="monitor-value">-</span>
-              </div>
-              <svg class="sparkline" viewBox="0 0 240 64" preserveAspectRatio="none" aria-hidden="true">
-                <polyline id="sparkDelay" class="spark-line spark-delay" points="" />
-              </svg>
-            </div>
-            <div class="monitor-cell">
-              <div class="monitor-head">
-                <span data-i18n="monitorConnections">活跃连接</span>
-                <span id="connectionsValue" class="monitor-value">0</span>
-              </div>
-              <svg class="sparkline" viewBox="0 0 240 64" preserveAspectRatio="none" aria-hidden="true">
-                <polyline id="sparkConn" class="spark-line spark-conn" points="" />
-              </svg>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel traffic-panel span-12" aria-labelledby="trafficTitle">
-          <div class="panel-title-row">
-            <h2 id="trafficTitle" data-i18n="trafficTitle">流量统计</h2>
-            <div class="title-actions">
-              <button id="toggleTraffic" class="icon-button" title="折叠/展开流量统计" type="button" data-i18n-title="collapseTrafficTitle">▾</button>
-              <button id="refreshTrafficStats" class="icon-button" title="刷新流量统计" type="button" data-i18n-title="refreshTrafficTitle">↻</button>
-            </div>
-          </div>
-          <div id="trafficBody">
-          <div class="traffic-overview">
-            <div class="t-stat">
-              <span class="kpi-icon" aria-hidden="true">📅</span>
-              <span class="kpi-label" data-i18n="trafficToday">今天</span>
-              <span id="tToday" class="t-value">0 B</span>
-              <span class="t-bar"><i id="tTodayBar"></i></span>
-            </div>
-            <div class="t-stat">
-              <span class="kpi-icon" aria-hidden="true">◔</span>
-              <span class="kpi-label" data-i18n="trafficD3">近 3 天</span>
-              <span id="tD3" class="t-value">0 B</span>
-              <span class="t-bar"><i id="tD3Bar"></i></span>
-            </div>
-            <div class="t-stat">
-              <span class="kpi-icon" aria-hidden="true">◑</span>
-              <span class="kpi-label" data-i18n="trafficD7">近 7 天</span>
-              <span id="tD7" class="t-value">0 B</span>
-              <span class="t-bar"><i id="tD7Bar"></i></span>
-            </div>
-            <div class="t-stat">
-              <span class="kpi-icon" aria-hidden="true">◕</span>
-              <span class="kpi-label" data-i18n="trafficD30">近 30 天</span>
-              <span id="tD30" class="t-value">0 B</span>
-              <span class="t-bar t-bar-max"><i></i></span>
-            </div>
-          </div>
-          <div id="trafficNodes" class="traffic-cards">
-            <div class="traffic-empty" data-i18n="trafficEmpty">暂无流量记录，使用代理后将自动统计</div>
-          </div>
-          </div>
-        </section>
-
         <section class="panel connection-card span-7" aria-labelledby="connectionTitle">
           <div class="panel-title-row">
             <h2 id="connectionTitle">连接中心</h2>
@@ -252,6 +174,84 @@
               <button id="applyPorts" class="button button-small" type="button" data-i18n="applyPortsBtn">应用并重启</button>
             </div>
             <p id="portHint" class="appearance-hint"></p>
+          </div>
+        </section>
+
+        <section class="panel monitor-panel span-12" aria-labelledby="monitorTitle">
+          <div class="panel-title-row">
+            <h2 id="monitorTitle" data-i18n="monitorTitle">实时监控</h2>
+            <button id="toggleMonitor" class="icon-button" title="折叠/展开" type="button" data-i18n-title="collapseTitle">▾</button>
+          </div>
+          <div id="monitorBody" class="monitor-grid">
+            <div class="monitor-cell">
+              <div class="monitor-head">
+                <span data-i18n="monitorTraffic">流量</span>
+                <span id="trafficValue" class="monitor-value">0 ↓ / 0 ↑ B/s</span>
+              </div>
+              <svg class="sparkline" viewBox="0 0 240 64" preserveAspectRatio="none" aria-hidden="true">
+                <polyline id="sparkDown" class="spark-line spark-down" points="" />
+                <polyline id="sparkUp" class="spark-line spark-up" points="" />
+              </svg>
+            </div>
+            <div class="monitor-cell">
+              <div class="monitor-head">
+                <span data-i18n="monitorDelay">当前延迟</span>
+                <span id="delayValue" class="monitor-value">-</span>
+              </div>
+              <svg class="sparkline" viewBox="0 0 240 64" preserveAspectRatio="none" aria-hidden="true">
+                <polyline id="sparkDelay" class="spark-line spark-delay" points="" />
+              </svg>
+            </div>
+            <div class="monitor-cell">
+              <div class="monitor-head">
+                <span data-i18n="monitorConnections">活跃连接</span>
+                <span id="connectionsValue" class="monitor-value">0</span>
+              </div>
+              <svg class="sparkline" viewBox="0 0 240 64" preserveAspectRatio="none" aria-hidden="true">
+                <polyline id="sparkConn" class="spark-line spark-conn" points="" />
+              </svg>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel traffic-panel span-12" aria-labelledby="trafficTitle">
+          <div class="panel-title-row">
+            <h2 id="trafficTitle" data-i18n="trafficTitle">流量统计</h2>
+            <div class="title-actions">
+              <button id="toggleTraffic" class="icon-button" title="折叠/展开流量统计" type="button" data-i18n-title="collapseTrafficTitle">▾</button>
+              <button id="refreshTrafficStats" class="icon-button" title="刷新流量统计" type="button" data-i18n-title="refreshTrafficTitle">↻</button>
+            </div>
+          </div>
+          <div id="trafficBody">
+          <div class="traffic-overview">
+            <div class="t-stat">
+              <span class="kpi-icon" aria-hidden="true">📅</span>
+              <span class="kpi-label" data-i18n="trafficToday">今天</span>
+              <span id="tToday" class="t-value">0 B</span>
+              <span class="t-bar"><i id="tTodayBar"></i></span>
+            </div>
+            <div class="t-stat">
+              <span class="kpi-icon" aria-hidden="true">◔</span>
+              <span class="kpi-label" data-i18n="trafficD3">近 3 天</span>
+              <span id="tD3" class="t-value">0 B</span>
+              <span class="t-bar"><i id="tD3Bar"></i></span>
+            </div>
+            <div class="t-stat">
+              <span class="kpi-icon" aria-hidden="true">◑</span>
+              <span class="kpi-label" data-i18n="trafficD7">近 7 天</span>
+              <span id="tD7" class="t-value">0 B</span>
+              <span class="t-bar"><i id="tD7Bar"></i></span>
+            </div>
+            <div class="t-stat">
+              <span class="kpi-icon" aria-hidden="true">◕</span>
+              <span class="kpi-label" data-i18n="trafficD30">近 30 天</span>
+              <span id="tD30" class="t-value">0 B</span>
+              <span class="t-bar t-bar-max"><i></i></span>
+            </div>
+          </div>
+          <div id="trafficNodes" class="traffic-cards">
+            <div class="traffic-empty" data-i18n="trafficEmpty">暂无流量记录，使用代理后将自动统计</div>
+          </div>
           </div>
         </section>
 
