@@ -394,6 +394,18 @@
           </div>
           <div class="appearance-row">
             <div class="appearance-col">
+              <label class="field-label" for="glassEnabled" data-i18n="glassEnabledLabel">玻璃特效</label>
+              <label class="switch-row"><input id="glassEnabled" type="checkbox" checked /> <span data-i18n="glassEnabledText">毛玻璃模糊 / 半透明</span></label>
+              <p class="appearance-hint" data-i18n="glassEnabledHint">关闭后卡片与顶栏变为不透明实体样式。</p>
+            </div>
+            <div class="appearance-col">
+              <label class="field-label" for="glassBlur"><span data-i18n="glassBlurLabel">毛玻璃强度</span> <span id="glassBlurValue" class="slider-value"></span></label>
+              <input id="glassBlur" type="range" min="0" max="100" step="5" value="100" />
+              <p class="appearance-hint" data-i18n="glassBlurHint">0 为纯透玻璃（仅透明无模糊），100 为强毛玻璃。</p>
+            </div>
+          </div>
+          <div class="appearance-row">
+            <div class="appearance-col">
               <label class="field-label" for="particlesEnabled" data-i18n="particlesLabel">粒子特效</label>
               <label class="switch-row"><input id="particlesEnabled" type="checkbox" checked /> <span data-i18n="particlesToggleText">动态粒子 / 星轨连线</span></label>
               <p class="appearance-hint" data-i18n="particlesOffHint">关闭后不消耗渲染性能。</p>

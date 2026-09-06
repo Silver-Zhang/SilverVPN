@@ -169,6 +169,11 @@
       clearBgBtn: '清除',
       glassLabel: '玻璃透明度',
       glassHint: '透明度越低，背景越穿透；图片仅保存在本机。',
+      glassEnabledLabel: '玻璃特效',
+      glassEnabledText: '毛玻璃模糊 / 半透明',
+      glassEnabledHint: '关闭后卡片与顶栏变为不透明实体样式。',
+      glassBlurLabel: '毛玻璃强度',
+      glassBlurHint: '0 为纯透玻璃（仅透明无模糊），100 为强毛玻璃。',
       particlesLabel: '粒子特效',
       particlesToggleText: '动态粒子 / 星轨连线',
       particlesOffHint: '关闭后不消耗渲染性能。',
@@ -315,6 +320,11 @@
       clearBgBtn: 'Clear',
       glassLabel: 'Glass opacity',
       glassHint: 'Lower opacity lets the background show through; images stay on this device.',
+      glassEnabledLabel: 'Glass effect',
+      glassEnabledText: 'Frosted blur / translucency',
+      glassEnabledHint: 'When off, cards and top bar use solid backgrounds.',
+      glassBlurLabel: 'Frost intensity',
+      glassBlurHint: '0 is clear glass (transparent, no blur); 100 is strong frosted glass.',
       particlesLabel: 'Particles',
       particlesToggleText: 'Particles & constellation',
       particlesOffHint: 'Disable to save rendering performance.',
@@ -628,6 +638,23 @@
     const glassValue = $('#glassValue');
     if (glassValue) {
       glassValue.textContent = `${Math.round(opacity * 100)}%`;
+    }
+    const glassEnabled = settings.glassEnabled !== false;
+    document.body.classList.toggle('glass-off', !glassEnabled);
+    const glassBlur = typeof settings.glassBlur === 'number' ? settings.glassBlur : 1;
+    document.body.style.setProperty('--glass-blur', `${Math.round(glassBlur * 20)}px`);
+    document.body.style.setProperty('--glass-saturate', `${Math.round(100 + glassBlur * 40)}%`);
+    const glassToggle = $('#glassEnabled');
+    if (glassToggle && document.activeElement !== glassToggle) {
+      glassToggle.checked = glassEnabled;
+    }
+    const blurInput = $('#glassBlur');
+    if (blurInput && document.activeElement !== blurInput) {
+      blurInput.value = String(Math.round(glassBlur * 100));
+    }
+    const blurValue = $('#glassBlurValue');
+    if (blurValue) {
+      blurValue.textContent = `${Math.round(glassBlur * 100)}%`;
     }
     const particlesEnabled = settings.particlesEnabled !== false;
     const particlesIntensity = typeof settings.particlesIntensity === 'number' ? settings.particlesIntensity : 0.6;
@@ -1535,6 +1562,23 @@
     $('#glassOpacity').addEventListener('change', event => {
       callAction('set-appearance', { glassOpacity: Number(event.target.value) / 100 }, t('appearanceSaved'));
     });
+    $('#glassEnabled').addEventListener('change', event => {
+      const enabled = event.target.checked;
+      document.body.classList.toggle('glass-off', !enabled);
+      callAction('set-appearance', { glassEnabled: enabled }, t('appearanceSaved'));
+    });
+    $('#glassBlur').addEventListener('input', event => {
+      const blur = Number(event.target.value) / 100;
+      document.body.style.setProperty('--glass-blur', `${Math.round(blur * 20)}px`);
+      document.body.style.setProperty('--glass-saturate', `${Math.round(100 + blur * 40)}%`);
+      const value = $('#glassBlurValue');
+      if (value) {
+        value.textContent = `${event.target.value}%`;
+      }
+    });
+    $('#glassBlur').addEventListener('change', event => {
+      callAction('set-appearance', { glassBlur: Number(event.target.value) / 100 }, t('appearanceSaved'));
+    });
     $('#particlesEnabled').addEventListener('change', event => {
       const enabled = event.target.checked;
       if (window.silverVpnParticles) {
@@ -1626,6 +1670,8 @@
         theme: 'vision',
         bgImage: '',
         glassOpacity: 0.9,
+        glassBlur: 1,
+        glassEnabled: true,
         particlesEnabled: true,
         particlesIntensity: 0.6,
         particlesSpeed: 1,
@@ -1732,6 +1778,8 @@
         theme: payload.theme || state.dashboard.settings.theme,
         bgImage: typeof payload.bgImage === 'string' ? payload.bgImage : state.dashboard.settings.bgImage,
         glassOpacity: typeof payload.glassOpacity === 'number' ? payload.glassOpacity : state.dashboard.settings.glassOpacity,
+        glassBlur: typeof payload.glassBlur === 'number' ? payload.glassBlur : state.dashboard.settings.glassBlur,
+        glassEnabled: typeof payload.glassEnabled === 'boolean' ? payload.glassEnabled : state.dashboard.settings.glassEnabled,
         particlesEnabled: typeof payload.particlesEnabled === 'boolean' ? payload.particlesEnabled : state.dashboard.settings.particlesEnabled,
         particlesIntensity: typeof payload.particlesIntensity === 'number' ? payload.particlesIntensity : state.dashboard.settings.particlesIntensity,
         particlesSpeed: typeof payload.particlesSpeed === 'number' ? payload.particlesSpeed : state.dashboard.settings.particlesSpeed,

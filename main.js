@@ -106,6 +106,8 @@ let settings = {
   theme: 'vision',
   bgImage: '',
   glassOpacity: 0.9,
+  glassBlur: 1,
+  glassEnabled: true,
   particlesEnabled: true,
   particlesIntensity: 0.6,
   particlesSpeed: 1,
@@ -2436,6 +2438,8 @@ async function buildDashboard() {
       theme: settings.theme || 'vision',
       bgImage: settings.bgImage || '',
       glassOpacity: typeof settings.glassOpacity === 'number' ? settings.glassOpacity : 0.9,
+      glassBlur: typeof settings.glassBlur === 'number' ? settings.glassBlur : 1,
+      glassEnabled: settings.glassEnabled !== false,
       particlesEnabled: settings.particlesEnabled !== false,
       particlesIntensity: typeof settings.particlesIntensity === 'number' ? settings.particlesIntensity : 0.6,
       particlesSpeed: typeof settings.particlesSpeed === 'number' ? settings.particlesSpeed : 1,
@@ -2531,6 +2535,12 @@ function setAppearanceFromGui(payload = {}) {
   }
   if (typeof payload.glassOpacity === 'number') {
     settings.glassOpacity = Math.min(1, Math.max(0, payload.glassOpacity));
+  }
+  if (typeof payload.glassBlur === 'number') {
+    settings.glassBlur = Math.min(1, Math.max(0, payload.glassBlur));
+  }
+  if (typeof payload.glassEnabled === 'boolean') {
+    settings.glassEnabled = payload.glassEnabled;
   }
   if (typeof payload.particlesEnabled === 'boolean') {
     settings.particlesEnabled = payload.particlesEnabled;

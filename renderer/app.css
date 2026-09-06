@@ -27,6 +27,9 @@
   --glass: linear-gradient(165deg, rgba(20, 32, 74, 0.92), rgba(10, 16, 40, 0.96));
   --card-rgb: 15, 23, 48;
   --card-alpha: 0.9;
+  --glass-blur: 20px;
+  --glass-saturate: 140%;
+  --topbar-blur: 16px;
   --user-bg: none;
   --topbar-bg: rgba(6, 10, 26, 0.72);
   --header-bg: rgba(10, 16, 40, 0.6);
@@ -249,7 +252,8 @@ button {
   gap: 14px;
   padding: 12px 22px;
   background: var(--topbar-bg);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(var(--topbar-blur));
+  -webkit-backdrop-filter: blur(var(--topbar-blur));
   border-bottom: 1px solid var(--line);
 }
 
@@ -357,11 +361,28 @@ button {
 .kpi-card {
   position: relative;
   background: rgba(var(--card-rgb), var(--card-alpha));
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--glow);
+}
+
+/* Glass effect off — solid, non-blurred surfaces */
+body.glass-off .panel,
+body.glass-off .toolbar,
+body.glass-off .node-surface,
+body.glass-off .update-card,
+body.glass-off .kpi-card {
+  background: rgba(var(--card-rgb), 1);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+body.glass-off .topbar {
+  background: var(--surface-2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .panel::before,
