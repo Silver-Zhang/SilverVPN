@@ -144,6 +144,11 @@ function requestJson(url) {
       response.setEncoding('utf8');
       response.on('data', chunk => { body += chunk; });
       response.on('end', () => {
+        if (response.statusCode === 404) {
+          // 仓库尚未发布任何 Release：视为无可用更新，不报错
+          resolve(null);
+          return;
+        }
         if (response.statusCode !== 200) {
           reject(new Error(`Update check returned HTTP ${response.statusCode}`));
           return;
@@ -166,10 +171,23 @@ async function checkForUpdate(options = {}) {
     return { checked: false, skipped: true, currentVersion: app.getVersion() };
   }
   const release = await requestJson(UPDATE_API_URL);
-  const latestVersion = normalizeVersion(release.tag_name);
-  if (!latestVersion) throw new Error('Update service did not provide a version.');
   settings.lastUpdateCheckAt = new Date(checkedAt).toISOString();
   saveSettings();
+  if (!release) {
+    // 无 Release：当前版本即最新
+    return {
+      checked: true,
+      currentVersion: app.getVersion(),
+      latestVersion: app.getVersion(),
+      available: false,
+      dismissed: false,
+      publishedAt: '',
+      releaseNotes: '',
+      releaseUrl: `https://github.com/${UPDATE_REPOSITORY}/releases`
+    };
+  }
+  const latestVersion = normalizeVersion(release.tag_name);
+  if (!latestVersion) throw new Error('Update service did not provide a version.');
   return {
     checked: true,
     currentVersion: app.getVersion(),
