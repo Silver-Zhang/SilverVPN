@@ -2530,7 +2530,7 @@ function setAppearanceFromGui(payload = {}) {
     settings.bgImage = payload.bgImage;
   }
   if (typeof payload.glassOpacity === 'number') {
-    settings.glassOpacity = Math.min(1, Math.max(0.55, payload.glassOpacity));
+    settings.glassOpacity = Math.min(1, Math.max(0, payload.glassOpacity));
   }
   if (typeof payload.particlesEnabled === 'boolean') {
     settings.particlesEnabled = payload.particlesEnabled;
