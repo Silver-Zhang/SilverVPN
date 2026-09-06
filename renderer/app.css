@@ -520,6 +520,7 @@ dd,
     0 0 16px rgba(52, 211, 153, 0.55),
     0 0 34px rgba(34, 211, 238, 0.3);
   animation: hud-core-glide 7s ease-in-out infinite;
+  transition: background 500ms ease, box-shadow 500ms ease;
 }
 
 /* 扩散能量波：从核心向外扩散并渐隐 */
@@ -533,6 +534,7 @@ dd,
   border-radius: 50%;
   background: radial-gradient(circle, rgba(52, 211, 153, 0.4), rgba(34, 211, 238, 0.12) 60%, transparent 72%);
   animation: hud-wave-spread 2.4s ease-out infinite;
+  transition: background 500ms ease;
 }
 
 .hud-wave-2 {
@@ -556,6 +558,7 @@ dd,
   background: var(--cyan);
   box-shadow: 0 0 9px rgba(34, 211, 238, 0.95), 0 0 18px rgba(34, 211, 238, 0.4);
   animation: hud-orbit 4.2s linear infinite;
+  transition: background 500ms ease, box-shadow 500ms ease;
 }
 
 .hud-orbit i:nth-child(2) {
@@ -627,25 +630,47 @@ dd,
   }
 }
 
-/* 停止状态：静态灰 */
+/* 停止状态：红色能量冷却特效（与开启的绿色明显不同，但保持同构动画） */
 .kpi-card.is-off .hud-core {
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.4) 0%, var(--muted) 45%, rgba(127, 146, 181, 0.4) 75%, transparent 100%);
-  box-shadow: none;
-  animation: none;
-  opacity: 0.5;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.85) 0%, var(--red) 45%, rgba(248, 113, 113, 0.45) 75%, transparent 100%);
+  box-shadow:
+    0 0 6px rgba(248, 113, 113, 0.85),
+    0 0 16px rgba(248, 113, 113, 0.5),
+    0 0 30px rgba(220, 38, 38, 0.3);
+  animation: hud-core-glide 10s ease-in-out infinite, hud-off-flicker 1.6s ease-in-out infinite;
 }
 
 .kpi-card.is-off .hud-wave {
-  background: rgba(127, 146, 181, 0.2);
-  animation: none;
-  opacity: 0.4;
+  background: radial-gradient(circle, rgba(248, 113, 113, 0.32), rgba(220, 38, 38, 0.1) 60%, transparent 72%);
+  animation: hud-wave-spread 3.4s ease-out infinite;
 }
 
 .kpi-card.is-off .hud-orbit i {
-  background: var(--muted);
-  box-shadow: none;
-  opacity: 0.45;
-  animation: none;
+  background: var(--red);
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.9), 0 0 16px rgba(220, 38, 38, 0.35);
+  animation-duration: 6s;
+  opacity: 0.75;
+}
+
+.kpi-card.is-off .hud-orbit i:nth-child(2) {
+  animation-duration: 5s;
+}
+
+.kpi-card.is-off .hud-orbit i:nth-child(3) {
+  animation-duration: 7s;
+}
+
+/* 停止态的轻微闪烁，与运行态的持续呼吸区分 */
+@keyframes hud-off-flicker {
+  0%,
+  100% {
+    opacity: 0.85;
+    filter: brightness(0.85);
+  }
+  50% {
+    opacity: 0.6;
+    filter: brightness(1.1);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

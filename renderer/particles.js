@@ -17,10 +17,59 @@
   let rafId = 0;
   let running = false;
 
-  // HUD 能量核心（引力源）位置跟踪：黑洞式吸入粒子
-  const hud = { x: -9999, y: -9999, active: false };
+  // 核心状态机：运行 = 绿色慢速吸积 + 星环；停止 = 红色 + 粒子全部吸走
+  // 过渡：absorbing（红色把所有粒子吸入）→ off；releasing（从核心理出）→ on
+  const core = { mode: 'on', emitCarry: 0 };
   const HUD_CATCH_RADIUS = 30;
   const HUD_GLOW_RADIUS = 260;
+  const RING_INNER = 42;
+  const RING_OUTER = 150;
+  const MODE_COLOR = {
+    on: { r: 52, g: 211, b: 153 },
+    off: { r: 248, g: 113, b: 113 },
+    absorbing: { r: 248, g: 113, b: 113 },
+    releasing: { r: 52, g: 211, b: 153 }
+  };
+
+  function detectCoreMode() {
+    const card = document.getElementById('kpiCoreCard');
+    const on = Boolean(card && card.classList.contains('is-on') && !card.classList.contains('is-off'));
+    return on ? 'on' : 'off';
+  }
+
+  function observeCoreState() {
+    const card = document.getElementById('kpiCoreCard');
+    if (!card) {
+      return;
+    }
+    if (window.__silverVpnCoreObserver) {
+      window.__silverVpnCoreObserver.disconnect();
+    }
+    const observer = new MutationObserver(() => {
+      const next = detectCoreMode();
+      if (next === core.mode) {
+        return;
+      }
+      // 状态切换：先走过渡动画，再进入目标模式
+      if (next === 'on') {
+        core.mode = 'releasing';
+        core.emitCarry = 0;
+      } else {
+        core.mode = 'absorbing';
+        core.absorbStartedAt = performance.now();
+      }
+    });
+    observer.observe(card, { attributes: true, attributeFilter: ['class'] });
+    window.__silverVpnCoreObserver = observer;
+    core.mode = detectCoreMode();
+    if (core.mode === 'off') {
+      // 停止状态：外面一个粒子都不剩
+      particles.length = 0;
+    }
+  }
+
+  // HUD 能量核心（引力源）位置跟踪：黑洞式吸入粒子
+  const hud = { x: -9999, y: -9999, active: false };
 
   function updateHudAnchor() {
     const el = document.querySelector('#kpiCoreCard .kpi-hud');
@@ -32,7 +81,7 @@
     const rect = el.getBoundingClientRect();
     hud.x = rect.left + rect.width / 2;
     hud.y = rect.top + rect.height / 2;
-    hud.active = card.classList.contains('is-on') && !card.classList.contains('is-off');
+    hud.active = true;
   }
 
   function respawnParticle(particle) {
@@ -44,6 +93,19 @@
       particle.x = Math.random() * width;
       particle.y = Math.random() * height;
     }
+  }
+
+  // 从核心向外“吐”一个粒子（释放动画）
+  function emitParticle(speed) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = HUD_CATCH_RADIUS + 8 + Math.random() * 14;
+    const particle = {
+      x: hud.x + Math.cos(angle) * radius,
+      y: hud.y + Math.sin(angle) * radius,
+      vx: Math.cos(angle) * speed * 2.6,
+      vy: Math.sin(angle) * speed * 2.6
+    };
+    particles.push(particle);
   }
 
   // 根据强度计算实际参数
@@ -58,8 +120,8 @@
       linkDist: 90 + 60 * k,
       linkAlpha: 0.32 + 0.22 * k,
       gravityRadius: 220 + 120 * k,
-      gravityStrength: 1.1 + 0.5 * k,
-      swirlStrength: 1.4 + 0.6 * k
+      gravityStrength: 0.5 + 0.25 * k,
+      swirlStrength: 1.5 + 0.5 * k
     };
   }
 
@@ -94,6 +156,10 @@
 
   // 增量同步数量：保留已有粒子，只新增或截断，避免位置瞬移
   function syncCount() {
+    // 核心停止时外面不留粒子
+    if (core.mode === 'off' || core.mode === 'absorbing') {
+      return;
+    }
     const { count, speed } = params();
     while (particles.length < count) {
       particles.push(spawn(speed));
@@ -122,17 +188,31 @@
     return { r, g, b, a: light ? 0.3 : 0.44 };
   }
 
+  function glowColor() {
+    const m = MODE_COLOR[core.mode] || MODE_COLOR.on;
+    return { r: m.r, g: m.g, b: m.b, a: core.mode === 'off' ? 0 : 0.6 };
+  }
+
+  function particleColor() {
+    // 吸收/释放过渡期间粒子用模式色（红/绿），稳定后回到主题色
+    if (core.mode === 'absorbing' || core.mode === 'releasing') {
+      const token = core.mode === 'absorbing' ? 'off' : 'on';
+      return MODE_COLOR[token];
+    }
+    return null;
+  }
+
   function draw() {
     ctx.clearRect(0, 0, width, height);
-    const color = themeColor();
     const p = params();
     updateHudAnchor();
 
-    // 吸积盘光效：核心周围一圈柔光（仅在核心运行且可见时）
-    if (hud.active && hud.x > -100 && hud.x < width + 100 && hud.y > -100 && hud.y < height + 100) {
+    // 吸积盘光效：核心周围一圈柔光（非 off 状态）
+    if (hud.active && core.mode !== 'off' && hud.x > -100 && hud.x < width + 100 && hud.y > -100 && hud.y < height + 100) {
+      const mc = glowColor();
       const glow = ctx.createRadialGradient(hud.x, hud.y, 0, hud.x, hud.y, HUD_GLOW_RADIUS * 0.7);
-      glow.addColorStop(0, `rgba(${color.r}, ${color.g}, ${color.b}, ${0.1 * color.a})`);
-      glow.addColorStop(0.55, `rgba(${color.r}, ${color.g}, ${color.b}, ${0.03 * color.a})`);
+      glow.addColorStop(0, `rgba(${mc.r}, ${mc.g}, ${mc.b}, ${0.12 * mc.a})`);
+      glow.addColorStop(0.55, `rgba(${mc.r}, ${mc.g}, ${mc.b}, ${0.04 * mc.a})`);
       glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = glow;
       ctx.beginPath();
@@ -141,6 +221,8 @@
     }
 
     // 星座连线：相邻粒子随机连成星轨，随距离渐隐
+    const baseColor = themeColor();
+    const transition = particleColor();
     ctx.lineWidth = 1;
     for (let i = 0; i < particles.length; i += 1) {
       const a = particles[i];
@@ -150,8 +232,8 @@
         const dy = a.y - b.y;
         const dist2 = dx * dx + dy * dy;
         if (dist2 < p.linkDist * p.linkDist) {
-          const alpha = (1 - Math.sqrt(dist2) / p.linkDist) * p.linkAlpha * color.a;
-          ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`;
+          const alpha = (1 - Math.sqrt(dist2) / p.linkDist) * p.linkAlpha * (transition ? 1 : baseColor.a);
+          ctx.strokeStyle = `rgba(${(transition || baseColor).r}, ${(transition || baseColor).g}, ${(transition || baseColor).b}, ${alpha})`;
           ctx.beginPath();
           ctx.moveTo(a.x, a.y);
           ctx.lineTo(b.x, b.y);
@@ -160,7 +242,23 @@
       }
     }
 
-    for (const particle of particles) {
+    // 释放进度：从核心理出粒子（平滑、有惯性），达标后进入运行模式
+    if (core.mode === 'releasing' && hud.active) {
+      const target = p.count;
+      if (particles.length < target) {
+        core.emitCarry += 0.25 + 0.1 * p.speed;
+        while (core.emitCarry >= 1 && particles.length < target) {
+          core.emitCarry -= 1;
+          emitParticle(p.speed);
+        }
+      } else {
+        core.mode = 'on';
+      }
+    }
+
+    for (let index = particles.length - 1; index >= 0; index -= 1) {
+      const particle = particles[index];
+
       // 鼠标排斥（水纹推开）
       const mdx = particle.x - mouse.x;
       const mdy = particle.y - mouse.y;
@@ -172,35 +270,78 @@
         particle.vy += (mdy / dist) * force;
       }
 
-      // 黑洞吸积：核心附近的粒子被螺旋吸入，靠近核心后“吞噬”并外围重生
       if (hud.active && hud.x > -100 && hud.x < width + 100 && hud.y > -100 && hud.y < height + 100) {
         const hdx = hud.x - particle.x;
         const hdy = hud.y - particle.y;
         const hdist = Math.hypot(hdx, hdy);
-        const catchH = HUD_CATCH_RADIUS + p.radius;
-        if (hdist < catchH) {
-          respawnParticle(particle);
-        } else if (hdist < p.gravityRadius) {
-          const falloff = 1 - hdist / p.gravityRadius;
-          const pull = falloff * falloff * p.gravityStrength;
-          const normX = hdx / hdist;
-          const normY = hdy / hdist;
-          // 向心拉力
-          particle.vx += normX * pull;
-          particle.vy += normY * pull;
-          // 切向涡流（吸积旋转方向）
-          const swirl = falloff * p.swirlStrength;
-          particle.vx += -normY * swirl;
-          particle.vy += normX * swirl;
+        const normX = hdx / (hdist || 1);
+        const normY = hdy / (hdist || 1);
+
+        if (core.mode === 'absorbing') {
+          // 关闭：把所有粒子快速吸进来（红），靠近即吞噬
+          const catchH = HUD_CATCH_RADIUS + p.radius;
+          if (hdist < catchH) {
+            particles.splice(index, 1);
+            continue;
+          }
+          const pullRadius = p.gravityRadius * 1.6;
+          const falloff = Math.max(0, 1 - hdist / pullRadius);
+          const force = 2.4 * falloff + 0.08;
+          particle.vx += normX * force;
+          particle.vy += normY * force;
+          particle.vx += -normY * force * 0.7;
+          particle.vy += normX * force * 0.7;
+          if (particles.length === 0) {
+            core.mode = 'off';
+          }
+        } else if (core.mode === 'releasing') {
+          // 开启：粒子从核心吐出（绿色），向外吹远，不被吸回
+          const hdist = Math.hypot(hdx, hdy);
+          if (hdist > 1) {
+            // 越靠近核心越强向外吹，让粒子快速飞离
+            const blow = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 1.4));
+            particle.vx += normX * blow * 0.5;
+            particle.vy += normY * blow * 0.5;
+          }
+          particle.vx *= 0.976;
+          particle.vy *= 0.976;
+        } else if (core.mode === 'on') {
+          // 运行：慢速吸积 + 星环（粒子绕核心旋转，不急着被吸）
+          if (hdist < HUD_CATCH_RADIUS + p.radius) {
+            respawnParticle(particle);
+            continue;
+          }
+          if (hdist < p.gravityRadius) {
+            const inRing = hdist > RING_INNER && hdist < RING_OUTER;
+            const falloff = 1 - hdist / p.gravityRadius;
+            if (inRing) {
+              // 星环区：强切向、弱径向，粒子绕行成环
+              const pull = 0.02 * falloff;
+              const swirl = 1.9 * falloff;
+              particle.vx += normX * pull;
+              particle.vy += normY * pull;
+              particle.vx += -normY * swirl;
+              particle.vy += normX * swirl;
+            } else {
+              // 外围：缓慢吸引进入星环
+              const pull = falloff * falloff * p.gravityStrength;
+              const swirl = falloff * p.swirlStrength * 0.4;
+              particle.vx += normX * pull;
+              particle.vy += normY * pull;
+              particle.vx += -normY * swirl;
+              particle.vy += normX * swirl;
+            }
+          }
         }
       }
 
       particle.vx *= 0.984;
       particle.vy *= 0.984;
       const speed = Math.hypot(particle.vx, particle.vy);
-      if (speed > 2.4) {
-        particle.vx *= 2.4 / speed;
-        particle.vy *= 2.4 / speed;
+      const maxSpeed = core.mode === 'absorbing' ? 4 : core.mode === 'releasing' ? 5 : 2.4;
+      if (speed > maxSpeed) {
+        particle.vx *= maxSpeed / speed;
+        particle.vy *= maxSpeed / speed;
       } else if (speed < 0.1) {
         particle.vx += (Math.random() - 0.5) * 0.05;
         particle.vy += (Math.random() - 0.5) * 0.05;
@@ -212,9 +353,10 @@
       if (particle.y < -12) particle.y = height + 12;
       else if (particle.y > height + 12) particle.y = -12;
 
+      const color = transition || baseColor;
       ctx.beginPath();
       ctx.arc(particle.x, particle.y, p.radius, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a})`;
+      ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${transition ? 0.5 : baseColor.a})`;
       ctx.fill();
     }
   }
@@ -274,6 +416,7 @@
     isEnabled: () => cfg.enabled,
     getIntensity: () => cfg.intensity,
     getSpeed: () => cfg.speed,
+    getMode: () => core.mode,
     getParticles: () => particles
   };
 
@@ -292,5 +435,6 @@
   });
 
   resize();
+  observeCoreState();
   start();
 })();
