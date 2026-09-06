@@ -181,6 +181,25 @@
       particlesIntensityHint: '控制粒子数量与星轨连线密度。',
       particlesSpeedLabel: '粒子速度',
       particlesSpeedHint: '粒子飞行与鼠标排斥的响应速度。',
+      diagRun: '网络诊断',
+      diagFix: '一键修复',
+      diagFixedToast: '修复完成，请查看诊断结果。',
+      diagCoreRunning: '核心运行中',
+      diagCoreStopped: '核心未运行',
+      diagPortsOk: '代理端口监听正常（HTTP {http} / SOCKS {socks}）',
+      diagPortsDown: '代理端口未监听（HTTP {http} / SOCKS {socks}）',
+      diagProxyOk: '系统代理指向本机 {port}，与核心一致',
+      diagProxyResidual: '系统代理残留：仍指向 127.0.0.1:{port} 但核心未运行，插件连接将被拒绝（ECONNREFUSED）',
+      diagProxyExternal: '系统代理由其他应用设置（{target}），未处理',
+      diagProxyOff: '系统代理已关闭（应用直连）',
+      diagPathOk: '代理链路正常（测试站点返回 {code}）',
+      diagPathFail: '代理链路失败（{code}），请检查节点与配置',
+      diagPathSkipped: '代理端口未监听，跳过链路测试',
+      diagDirectOk: '直连正常（返回 {code}）',
+      diagDirectFail: '直连失败或被拦截（{code}），受墙域名需走代理',
+      diagTunOn: 'TUN 模式开启中',
+      diagFixedProxyResidual: '已修复：系统代理残留恢复为直连（原指向 127.0.0.1:{port}）',
+      diagFixedProxySetting: '已修复：关闭失效的系统代理设置',
       pathsDataDir: '数据目录',
       pathsConfigFile: '配置文件',
       pathsControlApi: '控制 API'
@@ -332,15 +351,40 @@
       particlesIntensityHint: 'Controls particle count and link density.',
       particlesSpeedLabel: 'Speed',
       particlesSpeedHint: 'Response speed of particle flight and mouse repulsion.',
+      diagRun: 'Diagnose network',
+      diagFix: 'Fix issues',
+      diagFixedToast: 'Repair finished. See the diagnosis below.',
+      diagCoreRunning: 'Core is running',
+      diagCoreStopped: 'Core is not running',
+      diagPortsOk: 'Proxy ports listening (HTTP {http} / SOCKS {socks})',
+      diagPortsDown: 'Proxy ports not listening (HTTP {http} / SOCKS {socks})',
+      diagProxyOk: 'System proxy points to 127.0.0.1:{port} and matches the core',
+      diagProxyResidual: 'Leftover system proxy: still points to 127.0.0.1:{port} but the core is stopped — connections will be refused (ECONNREFUSED)',
+      diagProxyExternal: 'System proxy is set by another app ({target}); left untouched',
+      diagProxyOff: 'System proxy is off (direct connections)',
+      diagPathOk: 'Proxy path OK (test site returned {code})',
+      diagPathFail: 'Proxy path failed ({code}); check node and config',
+      diagPathSkipped: 'Proxy port not listening; path test skipped',
+      diagDirectOk: 'Direct connection OK (returned {code})',
+      diagDirectFail: 'Direct connection failed or blocked ({code}); blocked domains need the proxy',
+      diagTunOn: 'TUN mode is enabled',
+      diagFixedProxyResidual: 'Fixed: leftover system proxy reset to direct (was 127.0.0.1:{port})',
+      diagFixedProxySetting: 'Fixed: stale system proxy setting disabled',
       pathsDataDir: 'Data directory',
       pathsConfigFile: 'Config file',
       pathsControlApi: 'Control API'
     }
   };
 
-  function t(key) {
+  function t(key, params) {
     const language = state.language === 'en' ? 'en' : 'zh-CN';
-    return (messages[language] && messages[language][key]) || messages['zh-CN'][key] || key;
+    let text = (messages[language] && messages[language][key]) || messages['zh-CN'][key] || key;
+    if (params && typeof params === 'object') {
+      for (const [name, value] of Object.entries(params)) {
+        text = text.replace(new RegExp(`\\{${name}\\}`, 'g'), String(value));
+      }
+    }
+    return text;
   }
 
   function $(selector) {
@@ -624,6 +668,20 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  function renderDiagnostics(diagnosis) {
+    const list = $('#diagnosticsList');
+    if (!list) {
+      return;
+    }
+    const items = diagnosis && Array.isArray(diagnosis.items) ? diagnosis.items : [];
+    if (!items.length) {
+      list.hidden = true;
+      return;
+    }
+    list.hidden = false;
+    list.innerHTML = items.map(item => `<li class="diag-item diag-${item.level}">${escapeHtml(t(item.key, item.params))}</li>`).join('');
   }
 
   function applyAppearance(settings) {
@@ -1119,6 +1177,8 @@
     'set-bypass-hosts',
     'set-ports',
     'check-delays',
+    'network-diagnostics',
+    'fix-network',
     'dismiss-update'
   ]);
 
@@ -1551,6 +1611,27 @@
       }
     });
     $('#clearBg').addEventListener('click', () => callAction('set-appearance', { bgImage: '' }, t('appearanceSaved')));
+    $('#runDiagnostics').addEventListener('click', async () => {
+      const button = $('#runDiagnostics');
+      if (button) button.disabled = true;
+      try {
+        const result = await callAction('network-diagnostics', {});
+        renderDiagnostics(result && result.diagnosis);
+      } catch (_error) {
+        // callAction 已提示错误
+      } finally {
+        if (button) button.disabled = false;
+      }
+    });
+    $('#fixNetwork').addEventListener('click', async () => {
+      try {
+        const result = await callAction('fix-network', {});
+        renderDiagnostics(result && result.diagnosis);
+        toast(t('diagFixedToast'));
+      } catch (_error) {
+        // callAction 已提示错误
+      }
+    });
     $('#glassOpacity').addEventListener('input', event => {
       const alpha = Number(event.target.value) / 100;
       document.body.style.setProperty('--card-alpha', String(alpha));
@@ -1772,6 +1853,12 @@
       state.dashboard.activeProfile = state.dashboard.subscriptions.find(item => item.id === payload.id) || state.dashboard.activeProfile;
       state.dashboard.settings.currentProfileId = payload.id;
       return state.dashboard;
+    }
+    if (action === 'network-diagnostics') {
+      return { diagnosis: { items: [{ level: 'ok', key: 'diagCoreRunning' }, { level: 'ok', key: 'diagPortsOk', params: { http: 4780, socks: 4781 } }, { level: 'info', key: 'diagProxyOff' }], residual: false } };
+    }
+    if (action === 'fix-network') {
+      return { diagnosis: { items: [{ level: 'ok', key: 'diagCoreRunning' }, { level: 'ok', key: 'diagPortsOk', params: { http: 4780, socks: 4781 } }, { level: 'info', key: 'diagProxyOff' }], residual: false } };
     }
     if (action === 'set-appearance') {
       Object.assign(state.dashboard.settings, {

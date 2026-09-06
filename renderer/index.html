@@ -170,6 +170,13 @@
             </div>
             <div id="networkWarnings" class="network-warnings" hidden></div>
           </div>
+          <div class="network-diag">
+            <div class="diag-actions">
+              <button id="runDiagnostics" class="button button-small" type="button" data-i18n="diagRun">网络诊断</button>
+              <button id="fixNetwork" class="button button-small" type="button" data-i18n="diagFix">一键修复</button>
+            </div>
+            <ul id="diagnosticsList" class="diagnostics-list" hidden></ul>
+          </div>
           <div class="port-settings">
             <label class="field-label" for="portBaseInput" data-i18n="portGroupLabel">代理端口组（HTTP 基础端口）</label>
             <div class="port-row">

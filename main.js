@@ -2866,6 +2866,129 @@ async function queryPublicIp(proxyUrl = '') {
   }
 }
 
+function isPortOpen(port) {
+  return new Promise(resolve => {
+    const socket = net.connect({ host: CONTROL_HOST, port, timeout: 1200 });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once('error', () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+function cleanCurlEnv() {
+  return { HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '', http_proxy: '', https_proxy: '', all_proxy: '' };
+}
+
+async function probeProxyUrl() {
+  if (!commandAvailable('curl')) {
+    return { ok: false, code: 0, error: 'curl unavailable' };
+  }
+  const args = ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--connect-timeout', '4', '--max-time', '8', '-x', `http://${CONTROL_HOST}:${HTTP_PROXY_PORT}`, DEFAULT_DELAY_TEST_URL];
+  try {
+    const result = await runCapture('curl', args, { env: cleanCurlEnv() });
+    const code = Number(String(result.stdout || '').trim());
+    return { ok: Number.isInteger(code) && code >= 200 && code < 400, code };
+  } catch (error) {
+    return { ok: false, code: 0, error: error.message || String(error) };
+  }
+}
+
+async function probeDirectUrl() {
+  if (!commandAvailable('curl')) {
+    return { ok: false, code: 0, error: 'curl unavailable' };
+  }
+  const args = ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--connect-timeout', '4', '--max-time', '8', '--noproxy', '*', DEFAULT_DELAY_TEST_URL];
+  try {
+    const result = await runCapture('curl', args, { env: cleanCurlEnv() });
+    const code = Number(String(result.stdout || '').trim());
+    return { ok: Number.isInteger(code) && code >= 200 && code < 400, code };
+  } catch (error) {
+    return { ok: false, code: 0, error: error.message || String(error) };
+  }
+}
+
+// 网络诊断：核心、端口、系统代理残留、代理链路、直连
+async function runNetworkDiagnostics() {
+  const items = [];
+  const proxyStatus = getGnomeProxyStatus();
+  const coreRunning = coreIsRunning();
+  const [httpListening, socksListening] = await Promise.all([isPortOpen(HTTP_PROXY_PORT), isPortOpen(SOCKS_PROXY_PORT)]);
+  const portsListening = httpListening && socksListening;
+
+  items.push(coreRunning ? { level: 'ok', key: 'diagCoreRunning' } : { level: 'error', key: 'diagCoreStopped' });
+  items.push(portsListening
+    ? { level: 'ok', key: 'diagPortsOk', params: { http: HTTP_PROXY_PORT, socks: SOCKS_PROXY_PORT } }
+    : { level: 'error', key: 'diagPortsDown', params: { http: HTTP_PROXY_PORT, socks: SOCKS_PROXY_PORT } });
+
+  if (proxyStatus.mode === 'manual' && proxyStatus.ownedBySilverVPN) {
+    if (httpListening) {
+      items.push({ level: 'ok', key: 'diagProxyOk', params: { port: HTTP_PROXY_PORT } });
+    } else {
+      items.push({ level: 'error', key: 'diagProxyResidual', params: { port: HTTP_PROXY_PORT } });
+    }
+  } else if (proxyStatus.mode === 'manual') {
+    items.push({ level: 'warn', key: 'diagProxyExternal', params: { target: proxyStatus.http || 'unknown' } });
+  } else {
+    items.push({ level: 'info', key: 'diagProxyOff' });
+  }
+
+  if (httpListening) {
+    const probe = await probeProxyUrl();
+    items.push(probe.ok
+      ? { level: 'ok', key: 'diagPathOk', params: { code: probe.code } }
+      : { level: 'error', key: 'diagPathFail', params: { code: probe.code || probe.error || '?' } });
+  } else {
+    items.push({ level: 'info', key: 'diagPathSkipped' });
+  }
+
+  const direct = await probeDirectUrl();
+  items.push(direct.ok
+    ? { level: 'ok', key: 'diagDirectOk', params: { code: direct.code } }
+    : { level: 'warn', key: 'diagDirectFail', params: { code: direct.code || direct.error || '?' } });
+
+  if (settings.tunEnabled) {
+    items.push({ level: 'info', key: 'diagTunOn' });
+  }
+
+  return {
+    items,
+    residual: proxyStatus.mode === 'manual' && proxyStatus.ownedBySilverVPN && !httpListening,
+    coreRunning,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+// 一键修复：清理指向本机端口但核心未运行的系统代理残留
+async function runNetworkRepair() {
+  const fixed = [];
+  const proxyStatus = getGnomeProxyStatus();
+  const httpListening = await isPortOpen(HTTP_PROXY_PORT);
+  if (proxyStatus.mode === 'manual' && proxyStatus.ownedBySilverVPN && !httpListening) {
+    await setGnomeProxy(false);
+    writeShellProxyState(false);
+    settings.systemProxy = false;
+    saveSettings();
+    fixed.push({ key: 'diagFixedProxyResidual', params: { port: HTTP_PROXY_PORT } });
+  }
+  if (!coreIsRunning() && settings.systemProxy) {
+    writeShellProxyState(false);
+    settings.systemProxy = false;
+    saveSettings();
+    fixed.push({ key: 'diagFixedProxySetting' });
+  }
+  const diagnosis = await runNetworkDiagnostics();
+  return { fixed, diagnosis };
+}
+
 function getInterfaceSummary() {
   const interfaces = os.networkInterfaces();
   return Object.entries(interfaces)
@@ -3176,18 +3299,26 @@ async function handleGuiAction(action, payload = {}) {
     case 'start-core':
       await startCore();
       return buildDashboard();
-    case 'stop-core':
+    case 'stop-core': {
       if (settings.tunEnabled) {
         return setTunMode(false);
       }
       await stopCoreAndWait();
+      if (!settings.holdProxy && (settings.systemProxy || getGnomeProxyStatus().ownedBySilverVPN)) {
+        await setSystemProxy(false);
+      }
       return buildDashboard();
+    }
     case 'restart-core':
       await restartCore();
       return buildDashboard();
     case 'set-system-proxy':
       await setSystemProxy(Boolean(payload.enabled));
       return buildDashboard();
+    case 'network-diagnostics':
+      return { diagnosis: await runNetworkDiagnostics() };
+    case 'fix-network':
+      return { diagnosis: await runNetworkRepair() };
     case 'set-tun-mode':
       return setTunMode(Boolean(payload.enabled));
     case 'restore-default-network':
