@@ -5,3 +5,5 @@ xiongmao_linux_client*.tgz
 .DS_Store
 ._*
 renderer/static/media/silvervpn.png
+.npmrc
+resources/clash-binaries/

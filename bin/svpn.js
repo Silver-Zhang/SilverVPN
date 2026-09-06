@@ -14,6 +14,9 @@ const APP_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_DELAY_URL = 'https://www.gstatic.com/generate_204';
 const START_TIMEOUT_MS = 15000;
 const DEFAULT_BASE_PORTS = [4780, 4880, 4980, 5080, 5180, 5280, 5380, 5480, 5580, 5680];
+// GUI 默认端口组（若 server.json 已由 GUI/CLI 写入 config.ports，则以之为准）
+const GUI_DEFAULT_BASE = 4780;
+const GUI_DEFAULT_PORTS = { http: 4780, socks: 4781, service: 4788, core: 4790 };
 const MODE_ALIASES = {
   rule: 'rule',
   smart: 'rule',
@@ -97,6 +100,35 @@ function readJson(file, fallback) {
   } catch (_error) {
     return fallback;
   }
+}
+
+let activePaths = null;
+
+function setActivePaths(paths) {
+  activePaths = paths;
+}
+
+function sharedCoreSecret() {
+  try {
+    const file = activePaths && activePaths.settingsFile
+      ? activePaths.settingsFile
+      : process.env.SILVERVPN_DATA_DIR
+        ? path.join(process.env.SILVERVPN_DATA_DIR, 'settings.json')
+        : path.join(os.homedir(), '.config', 'SilverVPN', 'settings.json');
+    const value = readJson(file, {});
+    return value.coreApiSecret || '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+function ensureCoreSecret(paths) {
+  const settings = readJson(paths.settingsFile, {});
+  if (!/^[a-f0-9]{64}$/i.test(String(settings.coreApiSecret || ''))) {
+    settings.coreApiSecret = crypto.randomBytes(32).toString('hex');
+    writeJson(paths.settingsFile, settings);
+  }
+  return settings.coreApiSecret;
 }
 
 function writeJson(file, value) {
@@ -234,6 +266,21 @@ function formatPorts(ports) {
   return `HTTP ${ports.http} / SOCKS ${ports.socks} / API ${ports.service} / Core ${ports.core}`;
 }
 
+// GUI 当前使用的端口组：优先读 server.json 的顶层 config.ports（GUI/CLI 共享），
+// 兼容旧版 config.config.ports；否则默认
+function getGuiPorts(paths) {
+  const config = getServerConfig(paths);
+  const ports = (config && config.ports && config.ports.http)
+    ? config.ports
+    : (config && config.config && config.config.ports && config.config.ports.http)
+      ? config.config.ports
+      : null;
+  if (ports) {
+    return portsFromBase(ports.http);
+  }
+  return GUI_DEFAULT_PORTS;
+}
+
 function findCore(paths) {
   if (process.env.CLASH_CORE && fs.existsSync(process.env.CLASH_CORE)) return process.env.CLASH_CORE;
   const archMap = { x64: 'amd64', arm64: 'arm64', arm: 'armv7' };
@@ -302,6 +349,7 @@ function requestCore(ports, pathname, options = {}) {
         method: options.method || 'GET',
         headers: {
           'Content-Type': 'application/json',
+          ...(sharedCoreSecret() ? { Authorization: `Bearer ${sharedCoreSecret()}` } : {}),
           ...(body ? { 'Content-Length': Buffer.byteLength(body) } : {})
         },
         timeout: options.timeout || 5000
@@ -341,6 +389,42 @@ async function waitForCore(ports, timeoutMs = START_TIMEOUT_MS) {
     }
   }
   return false;
+}
+
+async function coreProbe(ports) {
+  try {
+    const value = await requestCore(ports, '/configs', { timeout: 1500 });
+    return Boolean(
+      value &&
+      typeof value === 'object' &&
+      Number(value.port) === ports.http &&
+      Number(value['socks-port']) === ports.socks
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function findUserMihomoProcesses() {
+  try {
+    const uid = typeof process.getuid === 'function' ? String(process.getuid()) : '';
+    const output = execSync('ps -eo pid=,uid=,args=', { encoding: 'utf8' });
+    return output
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line => /mihomo/i.test(line))
+      .filter(line => !uid || line.split(/\s+/)[1] === uid)
+      .map(line => Number(line.split(/\s+/)[0]))
+      .filter(pid => Number.isInteger(pid) && pid > 0);
+  } catch (_error) {
+    return [];
+  }
+}
+
+async function resolveCoreReuse(ports) {
+  const listening = await portListening(ports.core);
+  if (!listening) return false;
+  return coreProbe(ports);
 }
 
 function normalizeBypassHosts(values) {
@@ -415,8 +499,10 @@ function prepareRuntimeConfig(paths, ports) {
   delete config.tun;
   config.port = ports.http;
   config['socks-port'] = ports.socks;
+  config['allow-lan'] = false;
+  config['bind-address'] = '127.0.0.1';
   config['external-controller'] = `127.0.0.1:${ports.core}`;
-  config.secret = '';
+  config.secret = settings.coreApiSecret || '';
   if (settings.mode) config.mode = settings.mode;
   ensureRoutingRules(config, settings);
   const runtimeConfigFile = assertPathInHome(paths.runtimeConfigFile, 'Runtime config');
@@ -435,58 +521,48 @@ function appendLog(paths, stream, line) {
   fs.appendFileSync(assertPathInHome(path.join(paths.logsDir, stream), 'SilverVPN log'), line);
 }
 
-function proxyToCore(ports, request, response) {
-  const upstream = http.request(
-    {
-      hostname: '127.0.0.1',
-      port: ports.core,
-      path: request.url,
-      method: request.method,
-      headers: { ...request.headers, host: `127.0.0.1:${ports.core}` }
-    },
-    upstreamResponse => {
-      response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
-      upstreamResponse.pipe(response);
-    }
-  );
-  upstream.on('error', error => {
-    response.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ok: false, error: error.message }));
-  });
-  request.pipe(upstream);
-}
-
 async function daemon(paths, args) {
   const ports = getPorts(paths, args);
   const core = findCore(paths);
   if (!core) throw new Error('mihomo core not found. Run scripts/install-core.sh first.');
-  prepareRuntimeConfig(paths, ports);
 
-  const child = spawn(core, ['-d', paths.runtimeDir], {
-    stdio: ['ignore', 'inherit', 'inherit']
-  });
+  let child = null;
+  const reusing = await coreProbe(ports);
+  if (reusing) {
+    appendLog(paths, 'svpn-core.log', `[${new Date().toISOString()}] reusing existing core on port ${ports.core}\n`);
+  } else {
+    prepareRuntimeConfig(paths, ports);
+    child = spawn(core, ['-d', paths.runtimeDir], {
+      stdio: ['ignore', 'inherit', 'inherit']
+    });
+  }
   let shuttingDown = false;
   const server = http.createServer((request, response) => {
     if (request.url === '/health') {
       response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      response.end(JSON.stringify({ ok: true, pid: process.pid, corePid: child.pid, ports }));
+      response.end(JSON.stringify({ ok: true, pid: process.pid, corePid: child ? child.pid : null, ports, reusing }));
       return;
     }
-    proxyToCore(ports, request, response);
+    // 安全边界：service 只提供健康检查，不做 Core Controller 通用代理，
+    // 避免本机其他用户通过 service 绕过 Core secret 获得 Controller 权限。
+    response.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ ok: false, error: 'not found' }));
   });
 
   const stop = signal => {
     if (shuttingDown) return;
     shuttingDown = true;
     server.close();
-    if (pidAlive(child.pid)) child.kill(signal || 'SIGTERM');
+    if (child && pidAlive(child.pid)) child.kill(signal || 'SIGTERM');
     setTimeout(() => process.exit(0), 1500).unref();
   };
   process.on('SIGTERM', () => stop('SIGTERM'));
   process.on('SIGINT', () => stop('SIGINT'));
-  child.on('exit', code => {
-    if (!shuttingDown) process.exit(code || 1);
-  });
+  if (child) {
+    child.on('exit', code => {
+      if (!shuttingDown) process.exit(code || 1);
+    });
+  }
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -547,11 +623,43 @@ async function start(paths, args) {
     console.log(`SilverVPN 已在后台运行：${formatPorts(ports)}`);
     return;
   }
-  if (!portSetAvailable(ports)) {
+  const reusing = await resolveCoreReuse(ports);
+  const guiDataDir = path.resolve(path.join(os.homedir(), '.config', 'SilverVPN'));
+  const guiPorts = getGuiPorts(paths);
+  if (
+    !reusing &&
+    path.resolve(paths.dataDir) === guiDataDir &&
+    ports.http !== guiPorts.http &&
+    (await resolveCoreReuse(guiPorts))
+  ) {
+    throw new Error(
+      `检测到桌面 GUI 的代理核心正在运行（HTTP ${guiPorts.http}），与 CLI 端口组 ${formatPorts(ports)} 不同。` +
+      `请运行 svpn config ports ${guiPorts.http} 将 CLI 对齐到 GUI 后重试；或先关闭 GUI 再运行 svpn on。`
+    );
+  }
+  if (!reusing && !portSetAvailable(ports)) {
+    const others = findUserMihomoProcesses();
+    if (others.length) {
+      throw new Error(`检测到当前用户已有代理核心在运行（PID ${others.join(', ')}），端口组 ${formatPorts(ports)} 不可用。请先停止另一实例，或运行 svpn config ports <base-port> 更换个人端口。`);
+    }
     throw new Error(`端口组被占用：${formatPorts(ports)}。请运行 svpn config ports <base-port> 设置个人端口。`);
   }
   const core = findCore(paths);
   if (!core) throw new Error('mihomo core not found. Run scripts/install.sh first.');
+
+  if (reusing) {
+    try {
+      await restoreSelection(paths, ports);
+    } catch (_error) {
+      // 核心可能由 GUI 托管且鉴权尚未同步，选择恢复失败不影响集成。
+    }
+    if (args.proxy) writeShellProxy(paths, ports, true);
+    console.log('SilverVPN 已就绪（复用现有核心）');
+    console.log(`端口：${formatPorts(ports)}`);
+    console.log('提示：核心由现有实例（可能为桌面 GUI）托管；svpn off 只会清理集成，不会停止该核心。');
+    return;
+  }
+
   prepareRuntimeConfig(paths, ports);
   ensureDir(paths.logsDir);
   const stdout = fs.openSync(assertPathInHome(path.join(paths.logsDir, 'svpn-core.log'), 'SilverVPN log'), 'a');
@@ -612,8 +720,23 @@ function readModeLabel(mode) {
   return MODE_LABELS[mode] || mode || '未知';
 }
 
+function portListening(port) {
+  return new Promise(resolve => {
+    const socket = net.connect({ host: '127.0.0.1', port, timeout: 1000 });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once('error', () => resolve(false));
+  });
+}
+
 async function getCoreState(paths, ports) {
-  const state = { running: false, config: null, proxies: null };
+  const state = { running: false, listening: false, config: null, proxies: null };
   try {
     state.config = await requestCore(ports, '/configs', { timeout: 2000 });
     state.proxies = await requestCore(ports, '/proxies', { timeout: 3000 });
@@ -621,6 +744,7 @@ async function getCoreState(paths, ports) {
   } catch (_error) {
     state.running = false;
   }
+  state.listening = await portListening(ports.core);
   return state;
 }
 
@@ -690,30 +814,92 @@ function vscodeProxyState(ports) {
   };
 }
 
+function vscodeOverrideInfo() {
+  const read = base => {
+    const file = path.join(os.homedir(), base, 'data', 'Machine', 'settings.json');
+    const value = readJson(file, null);
+    return value && value['http.proxy'] && value['http.proxySupport'] === 'override'
+      ? String(value['http.proxy'])
+      : '';
+  };
+  return {
+    stable: read('.vscode-server'),
+    insiders: read('.vscode-server-insiders')
+  };
+}
+
 async function status(paths, args) {
   const ports = getPorts(paths, args);
   const pid = readPidInfo(paths);
   const alive = isRunning(paths);
+  if (!alive && pid && pid.pid) {
+    fs.rmSync(paths.pidFile, { force: true });
+  }
   const core = await getCoreState(paths, ports);
+  const cliUnavailable = !(alive || core.running);
+  const guiPorts = getGuiPorts(paths);
+  let guiListening = false;
+  let guiPortBusy = false;
+  if (!core.running) {
+    guiListening = await coreProbe(guiPorts);
+    if (!guiListening) {
+      guiPortBusy = await portListening(guiPorts.core);
+    }
+  }
+  const guiRunning = cliUnavailable && guiListening;
+  const activeHttpPort = core.running ? ports.http : guiListening ? guiPorts.http : 0;
   const mode = core.config ? core.config.mode : readJson(paths.settingsFile, {}).mode || 'rule';
   const node = getCurrentNode(paths, core.proxies, mode) || readJson(paths.settingsFile, {}).currentProxy || '未选择';
   const delay = core.running && node !== '未选择' && !args['no-delay'] ? await getDelay(ports, node) : null;
 
+  const override = vscodeOverrideInfo();
+  const vscodeTargets = [
+    path.join(os.homedir(), '.vscode-server'),
+    path.join(os.homedir(), '.vscode-server-insiders')
+  ];
+  const envMode = vscodeEnvEnabled(vscodeTargets);
+  const expectedProxy = activeHttpPort ? `http://127.0.0.1:${activeHttpPort}` : '';
+  const describeOverride = value => {
+    if (!value) return envMode ? '环境变量模式（已启用）' : '未配置';
+    const fix = '建议运行 svpn vscode on 修复';
+    if (!expectedProxy) return `${value}（警告：后端未运行，网络不可用；${fix}）`;
+    if (value === expectedProxy) return `${value}（旧版遗留配置；${fix}）`;
+    return `${value}（警告：与后端 ${expectedProxy} 不一致；${fix}）`;
+  };
+
   if (args.json) {
-    console.log(JSON.stringify({ running: alive || core.running, pid: pid && pid.pid, ports, mode, node, delay, terminalProxy: shellProxyEnabled(paths), vscodeProxy: vscodeProxyEnabled(ports), dataDir: paths.dataDir }, null, 2));
+    console.log(JSON.stringify({
+      running: alive || core.running,
+      guiCore: guiRunning,
+      pid: alive ? pid && pid.pid : null,
+      ports,
+      mode,
+      node,
+      delay,
+      terminalProxy: shellProxyEnabled(paths),
+      vscodeOverride: override,
+      dataDir: paths.dataDir
+    }, null, 2));
     return;
   }
 
-  console.log(`SilverVPN：${alive || core.running ? '运行中' : '未运行'}`);
+  if (alive || core.running) {
+    console.log('SilverVPN：运行中（CLI 后台）');
+  } else if (guiRunning) {
+    console.log(`SilverVPN：运行中（桌面 GUI 核心，HTTP ${guiPorts.http}）`);
+  } else if (guiPortBusy) {
+    console.log(`SilverVPN：未运行（端口 ${guiPorts.core} 有服务但无法验证；若 GUI 正在运行，请重启 GUI 完成配置迁移）`);
+  } else {
+    console.log('SilverVPN：未运行');
+  }
   console.log(`用户：${os.userInfo().username}`);
   console.log(`模式：${readModeLabel(mode)} (${String(mode).toLowerCase()})`);
   console.log(`节点：${node}${delay === null ? '' : `  ${delay} ms`}`);
   console.log(`代理：HTTP ${ports.http} / SOCKS ${ports.socks}`);
   console.log(`终端代理：${shellProxyEnabled(paths) ? '已开启' : '未开启'}`);
-  const vscodeState = vscodeProxyState(ports);
-  console.log(`VS Code Stable：${vscodeState.stable ? '已配置 override' : '未配置'}`);
-  console.log(`VS Code Insiders：${vscodeState.insiders ? '已配置 override' : '未配置'}`);
-  console.log(`后台：${alive ? `PID ${pid.pid}` : '无后台进程'}`);
+  console.log(`VS Code Stable：${describeOverride(override.stable)}`);
+  console.log(`VS Code Insiders：${describeOverride(override.insiders)}`);
+  console.log(`后台：${alive ? `PID ${pid.pid}` : '无后台进程'}${guiRunning ? '（核心由 GUI 托管）' : ''}`);
 }
 
 async function setMode(paths, args) {
@@ -826,19 +1012,22 @@ function proxy(paths, args) {
   console.log(`终端代理：${shellProxyEnabled(paths) ? '已开启' : '未开启'}`);
 }
 
-function updateVscodeSettingsFile(file, ports, enabled) {
-  if (!enabled && !fs.existsSync(file)) return;
-  const data = readJson(file, {});
-  if (enabled) {
-    data['http.proxy'] = `http://127.0.0.1:${ports.http}`;
-    data['http.proxySupport'] = 'override';
-    data['http.proxyStrictSSL'] = true;
-  } else {
-    delete data['http.proxy'];
-    delete data['http.proxySupport'];
-    delete data['http.proxyStrictSSL'];
-  }
+function clearVscodeProxySettings(file) {
+  if (!fs.existsSync(file)) return;
+  const data = readJson(file, null);
+  if (!data || typeof data !== 'object') return;
+  const keys = ['http.proxy', 'http.proxySupport', 'http.proxyStrictSSL'];
+  const changed = keys.some(key => Object.prototype.hasOwnProperty.call(data, key));
+  if (!changed) return;
+  keys.forEach(key => delete data[key]);
   writeJson(file, data);
+}
+
+function vscodeEnvEnabled(targets) {
+  return targets.every(base => {
+    const file = path.join(base, 'server-env-setup');
+    return readText(file).includes('# >>> SilverVPN proxy >>>');
+  });
 }
 
 function updateVscodeEnvFile(dir, enabled) {
@@ -856,7 +1045,7 @@ function updateVscodeEnvFile(dir, enabled) {
   fs.chmodSync(file, 0o700);
 }
 
-function vscode(paths, args) {
+async function vscode(paths, args) {
   const action = args._[1] || 'status';
   const ports = getPorts(paths, args);
   const targets = [
@@ -866,23 +1055,89 @@ function vscode(paths, args) {
   if (action === 'on') {
     writeShellProxy(paths, ports, true);
     for (const base of targets) {
-      updateVscodeSettingsFile(path.join(base, 'data', 'Machine', 'settings.json'), ports, true);
+      clearVscodeProxySettings(path.join(base, 'data', 'Machine', 'settings.json'));
       updateVscodeEnvFile(base, true);
     }
-    console.log('VS Code Remote 代理已配置：override');
+    console.log(`VS Code Remote 代理已启用：通过环境变量使用 http://127.0.0.1:${ports.http}`);
+    console.log('关闭代理后，重新连接 VS Code 会自动恢复直连，不会再断网。');
+    if (!(await coreProbe(ports))) {
+      console.log(`警告：代理后端当前未运行，VS Code 网络将不可用。请先执行 svpn on 启动后端（或开启桌面 GUI 并保持端口一致）。`);
+    }
     console.log('请重启 VS Code Server：pkill -f .vscode-server');
     return;
   }
   if (action === 'off') {
     for (const base of targets) {
-      updateVscodeSettingsFile(path.join(base, 'data', 'Machine', 'settings.json'), ports, false);
+      clearVscodeProxySettings(path.join(base, 'data', 'Machine', 'settings.json'));
       updateVscodeEnvFile(base, false);
     }
-    console.log('VS Code Remote 代理配置已移除');
+    console.log('VS Code Remote 代理已移除，重新连接后恢复直连');
     console.log('请重启 VS Code Server：pkill -f .vscode-server');
     return;
   }
-  console.log(`VS Code：${vscodeProxyEnabled(ports) ? '已配置 override' : '未配置'}`);
+  const legacy = vscodeOverrideInfo();
+  if (legacy.stable || legacy.insiders) {
+    console.log('VS Code：发现旧版遗留的持久代理配置（关闭代理会导致断网），请运行 svpn vscode on 修复');
+    return;
+  }
+  console.log(`VS Code：${vscodeEnvEnabled(targets) ? '环境变量代理已启用' : '未配置'}`);
+}
+
+async function applyBypassRuntime(paths, ports) {
+  prepareRuntimeConfig(paths, ports);
+  await requestCore(ports, '/configs?force=true', {
+    method: 'PUT',
+    body: { path: paths.runtimeConfigFile }
+  });
+  await restoreSelection(paths, ports);
+}
+
+async function bypass(paths, args) {
+  const action = args._[1] || 'list';
+  const ports = getPorts(paths, args);
+  const settings = readJson(paths.settingsFile, {});
+  const custom = normalizeBypassHosts(settings.bypassHosts || []);
+
+  const save = async next => {
+    writeJson(paths.settingsFile, { ...settings, bypassHosts: normalizeBypassHosts(next) });
+    const running = await coreProbe(ports);
+    if (running) {
+      try {
+        await applyBypassRuntime(paths, ports);
+        console.log('绕过列表已更新并即时生效（核心已热重载）。');
+      } catch (error) {
+        console.log(`绕过列表已保存，但核心热重载失败（${error.message}），重启代理后生效。`);
+      }
+    } else {
+      console.log('绕过列表已保存，启动代理后生效。');
+    }
+  };
+
+  if (action === 'list' || action === 'status') {
+    console.log(`内置默认绕过（${DEFAULT_BYPASS_HOSTS.length} 条）：`);
+    DEFAULT_BYPASS_HOSTS.forEach(host => console.log(`  ${host}`));
+    console.log(`自定义绕过（${custom.length} 条）：`);
+    if (!custom.length) console.log('  （无）');
+    custom.forEach(host => console.log(`  ${host}`));
+    return;
+  }
+  if (action === 'add') {
+    const values = normalizeBypassHosts(args._.slice(2));
+    if (!values.length) throw new Error('Usage: svpn bypass add <host> [host...]');
+    await save([...custom, ...values]);
+    return;
+  }
+  if (action === 'remove' || action === 'rm') {
+    const removeSet = new Set(normalizeBypassHosts(args._.slice(2)));
+    if (!removeSet.size) throw new Error('Usage: svpn bypass remove <host> [host...]');
+    await save(custom.filter(host => !removeSet.has(host)));
+    return;
+  }
+  if (action === 'reset' || action === 'clear') {
+    await save([]);
+    return;
+  }
+  throw new Error('Usage: svpn bypass list|add <host>|remove <host>|reset');
 }
 
 function configurePorts(paths, args) {
@@ -898,6 +1153,12 @@ function configurePorts(paths, args) {
   const ports = portsFromBase(normalizePort(base));
   const config = getServerConfig(paths);
   config.ports = ports;
+  if (config.config && config.config.ports) {
+    delete config.config.ports;
+    if (!Object.keys(config.config).length) {
+      delete config.config;
+    }
+  }
   saveServerConfig(paths, config);
   console.log(`个人端口已设置：${formatPorts(ports)}`);
 }
@@ -1054,25 +1315,27 @@ async function importConfig(paths, args) {
 async function on(paths, args) {
   await start(paths, { ...args, proxy: false });
   proxy(paths, { ...args, _: ['proxy', 'on'] });
-  vscode(paths, { ...args, _: ['vscode', 'on'] });
+  await vscode(paths, { ...args, _: ['vscode', 'on'] });
   console.log('SilverVPN 一键开启完成。');
 }
 
 async function off(paths, args) {
-  vscode(paths, { ...args, _: ['vscode', 'off'] });
+  await vscode(paths, { ...args, _: ['vscode', 'off'] });
   proxy(paths, { ...args, _: ['proxy', 'off'] });
   await stop(paths, { ...args, proxy: false });
   console.log('SilverVPN 一键关闭完成。');
 }
 
 function printHelp() {
-  console.log(`Usage: svpn <command>\n\nOne-click:\n  svpn on                       Start backend, terminal proxy and both VS Code Remote proxies\n  svpn off                      Stop and remove this user's proxy integrations\n  svpn status                   Human-friendly status\n\nCore commands:\n  svpn start [--proxy]          Start per-user proxy-only backend\n  svpn stop                     Stop backend\n  svpn restart [--proxy]        Restart backend\n\nProxy control:\n  svpn mode smart|global|direct Set proxy-only routing mode\n  svpn nodes [--delay]          List nodes, optionally with delays\n  svpn delay                    Alias for: svpn nodes --delay\n  svpn use <number|name>        Switch node and close old connections\n  svpn proxy on|off             Write per-user terminal proxy state\n  svpn vscode on|off            Configure Stable and Insiders Remote proxy\n\nSubscriptions:\n  svpn import <url|file> [name] Import and save a profile\n  svpn profile list             List subscription profiles\n  svpn profile use <number|name> Switch profile\n\nSetup:\n  svpn config ports <base-port> Set personal HTTP port base, e.g. 4880\n  svpn test                     Test IP/GitHub/Copilot/OpenAI/ChatGPT\n\nSafety:\n  - proxy-only: no TUN, routes, DNS or /etc changes.\n  - only the current user's HOME is modified.\n  - new shells automatically load proxy state through the installed shell hook.\n`);
+  console.log(`Usage: svpn <command>\n\nOne-click:\n  svpn on                       Start backend, terminal proxy and both VS Code Remote proxies\n  svpn off                      Stop and remove this user's proxy integrations\n  svpn status                   Human-friendly status\n\nCore commands:\n  svpn start [--proxy]          Start per-user proxy-only backend\n  svpn stop                     Stop backend\n  svpn restart [--proxy]        Restart backend\n\nProxy control:\n  svpn mode smart|global|direct Set proxy-only routing mode\n  svpn nodes [--delay]          List nodes, optionally with delays\n  svpn delay                    Alias for: svpn nodes --delay\n  svpn use <number|name>        Switch node and close old connections\n  svpn proxy on|off             Write per-user terminal proxy state\n  svpn vscode on|off            Configure Stable and Insiders Remote proxy\n  svpn bypass list|add|remove   Manage bypassed (direct) hosts\n\nSubscriptions:\n  svpn import <url|file> [name] Import and save a profile\n  svpn profile list             List subscription profiles\n  svpn profile use <number|name> Switch profile\n\nSetup:\n  svpn config ports <base-port> Set personal HTTP port base, e.g. 4880\n  svpn test                     Test IP/GitHub/Copilot/OpenAI/ChatGPT\n\nSafety:\n  - proxy-only: no TUN, routes, DNS or /etc changes.\n  - only the current user's HOME is modified.\n  - new shells automatically load proxy state through the installed shell hook.\n`);
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const command = args._[0] || 'help';
   const paths = getPaths(args);
+  setActivePaths(paths);
+  ensureCoreSecret(paths);
   ensureDir(paths.dataDir);
   ensureDir(paths.logsDir);
 
@@ -1090,6 +1353,7 @@ async function main() {
   if (command === 'use') return useNode(paths, args);
   if (command === 'proxy') return proxy(paths, args);
   if (command === 'vscode') return vscode(paths, args);
+  if (command === 'bypass') return bypass(paths, args);
   if (command === 'test') return runTest(paths, args);
   if (command === 'import') return importConfig(paths, args);
   if (command === 'profile') return profile(paths, args);
