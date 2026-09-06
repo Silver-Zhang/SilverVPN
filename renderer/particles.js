@@ -17,6 +17,35 @@
   let rafId = 0;
   let running = false;
 
+  // HUD 能量核心（引力源）位置跟踪：黑洞式吸入粒子
+  const hud = { x: -9999, y: -9999, active: false };
+  const HUD_CATCH_RADIUS = 30;
+  const HUD_GLOW_RADIUS = 260;
+
+  function updateHudAnchor() {
+    const el = document.querySelector('#kpiCoreCard .kpi-hud');
+    const card = document.getElementById('kpiCoreCard');
+    if (!el || !card) {
+      hud.active = false;
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    hud.x = rect.left + rect.width / 2;
+    hud.y = rect.top + rect.height / 2;
+    hud.active = card.classList.contains('is-on') && !card.classList.contains('is-off');
+  }
+
+  function respawnParticle(particle) {
+    const radius = HUD_GLOW_RADIUS * (1.5 + Math.random() * 0.8);
+    const angle = Math.random() * Math.PI * 2;
+    particle.x = hud.x + Math.cos(angle) * radius;
+    particle.y = hud.y + Math.sin(angle) * radius;
+    if (particle.x < 0 || particle.x > width || particle.y < 0 || particle.y > height) {
+      particle.x = Math.random() * width;
+      particle.y = Math.random() * height;
+    }
+  }
+
   // 根据强度计算实际参数
   function params() {
     const k = cfg.intensity;
@@ -27,7 +56,10 @@
       pushRadius: 120 + 60 * k,
       pushForce: 0.95 + 0.2 * k,
       linkDist: 90 + 60 * k,
-      linkAlpha: 0.32 + 0.22 * k
+      linkAlpha: 0.32 + 0.22 * k,
+      gravityRadius: 220 + 120 * k,
+      gravityStrength: 1.1 + 0.5 * k,
+      swirlStrength: 1.4 + 0.6 * k
     };
   }
 
@@ -94,6 +126,19 @@
     ctx.clearRect(0, 0, width, height);
     const color = themeColor();
     const p = params();
+    updateHudAnchor();
+
+    // 吸积盘光效：核心周围一圈柔光（仅在核心运行且可见时）
+    if (hud.active && hud.x > -100 && hud.x < width + 100 && hud.y > -100 && hud.y < height + 100) {
+      const glow = ctx.createRadialGradient(hud.x, hud.y, 0, hud.x, hud.y, HUD_GLOW_RADIUS * 0.7);
+      glow.addColorStop(0, `rgba(${color.r}, ${color.g}, ${color.b}, ${0.1 * color.a})`);
+      glow.addColorStop(0.55, `rgba(${color.r}, ${color.g}, ${color.b}, ${0.03 * color.a})`);
+      glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(hud.x, hud.y, HUD_GLOW_RADIUS * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // 星座连线：相邻粒子随机连成星轨，随距离渐隐
     ctx.lineWidth = 1;
@@ -116,15 +161,40 @@
     }
 
     for (const particle of particles) {
-      const dx = particle.x - mouse.x;
-      const dy = particle.y - mouse.y;
-      const dist2 = dx * dx + dy * dy;
-      if (dist2 < p.pushRadius * p.pushRadius && dist2 > 0.01) {
-        const dist = Math.sqrt(dist2);
+      // 鼠标排斥（水纹推开）
+      const mdx = particle.x - mouse.x;
+      const mdy = particle.y - mouse.y;
+      const mdist2 = mdx * mdx + mdy * mdy;
+      if (mdist2 < p.pushRadius * p.pushRadius && mdist2 > 0.01) {
+        const dist = Math.sqrt(mdist2);
         const force = ((p.pushRadius - dist) / p.pushRadius) * p.pushForce;
-        particle.vx += (dx / dist) * force;
-        particle.vy += (dy / dist) * force;
+        particle.vx += (mdx / dist) * force;
+        particle.vy += (mdy / dist) * force;
       }
+
+      // 黑洞吸积：核心附近的粒子被螺旋吸入，靠近核心后“吞噬”并外围重生
+      if (hud.active && hud.x > -100 && hud.x < width + 100 && hud.y > -100 && hud.y < height + 100) {
+        const hdx = hud.x - particle.x;
+        const hdy = hud.y - particle.y;
+        const hdist = Math.hypot(hdx, hdy);
+        const catchH = HUD_CATCH_RADIUS + p.radius;
+        if (hdist < catchH) {
+          respawnParticle(particle);
+        } else if (hdist < p.gravityRadius) {
+          const falloff = 1 - hdist / p.gravityRadius;
+          const pull = falloff * falloff * p.gravityStrength;
+          const normX = hdx / hdist;
+          const normY = hdy / hdist;
+          // 向心拉力
+          particle.vx += normX * pull;
+          particle.vy += normY * pull;
+          // 切向涡流（吸积旋转方向）
+          const swirl = falloff * p.swirlStrength;
+          particle.vx += -normY * swirl;
+          particle.vy += normX * swirl;
+        }
+      }
+
       particle.vx *= 0.984;
       particle.vy *= 0.984;
       const speed = Math.hypot(particle.vx, particle.vy);
@@ -211,6 +281,7 @@
     resize();
     initParticles();
   });
+  window.addEventListener('scroll', updateHudAnchor, { passive: true });
   window.addEventListener('pointermove', event => {
     mouse.x = event.clientX;
     mouse.y = event.clientY;
