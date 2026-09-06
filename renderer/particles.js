@@ -356,17 +356,22 @@
           particle.vx *= 0.976;
           particle.vy *= 0.976;
         } else if (core.mode === 'on') {
-          // 宽限期：刚开启的 3 秒无引力，粒子自由扩散
-          if (performance.now() < core.onGraceUntil) {
-            // 不施加任何核心力
+          // 引力递进：开启后 3s 无引力 → 6s 引力从 0 平滑递增到全量
+          const now = performance.now();
+          const inGrace = now < core.onGraceUntil;
+          const ramp = inGrace
+            ? 0
+            : Math.min(1, (now - core.onGraceUntil) / 6000);
+          if (inGrace) {
+            // 宽限期：不施加任何核心力
           } else if (hdist < HUD_CATCH_RADIUS + p.radius) {
             respawnParticle(particle);
             continue;
           } else if (particle.targetR != null && hdist > RING_INNER - 20) {
-            // 带轨道印记的粒子：维持在目标半径绕行（稳定的星环成员）
+            // 带轨道印记的粒子：渐变到目标半径绕行（稳定的星环成员）
             const delta = hdist - particle.targetR;
-            const pull = delta * 0.02;
-            const swirl = 1.0;
+            const pull = delta * 0.02 * ramp;
+            const swirl = 1.0 * ramp;
             particle.vx += normX * pull;
             particle.vy += normY * pull;
             particle.vx += -normY * swirl;
@@ -378,16 +383,16 @@
             const falloff = 1 - hdist / p.gravityRadius;
             if (inRing) {
               // 星环区：强切向、弱径向，粒子绕行成环
-              const pull = 0.02 * falloff;
-              const swirl = 1.9 * falloff;
+              const pull = 0.02 * falloff * ramp;
+              const swirl = 1.9 * falloff * ramp;
               particle.vx += normX * pull;
               particle.vy += normY * pull;
               particle.vx += -normY * swirl;
               particle.vy += normX * swirl;
             } else {
               // 外围：缓慢吸引进入星环
-              const pull = falloff * falloff * p.gravityStrength;
-              const swirl = falloff * p.swirlStrength * 0.4;
+              const pull = falloff * falloff * p.gravityStrength * ramp;
+              const swirl = falloff * p.swirlStrength * 0.4 * ramp;
               particle.vx += normX * pull;
               particle.vy += normY * pull;
               particle.vx += -normY * swirl;
