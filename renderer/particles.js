@@ -19,7 +19,7 @@
 
   // 核心状态机：运行 = 绿色慢速吸积 + 星环；停止 = 红色 + 粒子全部吸走
   // 过渡：absorbing（红色把所有粒子吸入）→ off；releasing（从核心理出）→ on
-  const core = { mode: 'on', emitCarry: 0 };
+  const core = { mode: 'on', emitCarry: 0, onGraceUntil: 0 };
   const HUD_CATCH_RADIUS = 30;
   const HUD_GLOW_RADIUS = 260;
   const RING_INNER = 42;
@@ -55,6 +55,8 @@
         core.mode = 'releasing';
         core.emitCarry = 0;
         core.releaseStartedAt = performance.now();
+        // 从启动到稳定吸积：释放 5.2s + 无引力宽限 3s
+        core.onGraceUntil = performance.now() + 8200;
       } else {
         core.mode = 'absorbing';
         core.absorbStartedAt = performance.now();
@@ -96,12 +98,26 @@
     }
   }
 
-  // 从核心向外“吐”一个粒子：统一绕核心公转方向甩出（不粒子自转）
+  // 从核心向外“吐”一个粒子：统一绕核心公转方向甩出（无自转）
+  // 按目标轨道分层：近/中粒子受轨道束缚绕行（形成星环），远的自由飞散
   function emitParticle(speed) {
     const angle = Math.random() * Math.PI * 2;
     const radius = HUD_CATCH_RADIUS + 6 + Math.random() * 10;
-    const radial = speed * (3.0 + Math.random() * 1.0);
-    const tangential = radial * 0.85;
+    const roll = Math.random();
+    let targetR;
+    let factor;
+    if (roll < 0.45) {
+      targetR = 55 + Math.random() * 95; // 近环：留在核心附近绕行
+      factor = 0.22 + Math.random() * 0.2;
+    } else if (roll < 0.8) {
+      targetR = 180 + Math.random() * 170; // 中环
+      factor = 0.6 + Math.random() * 0.4;
+    } else {
+      targetR = null; // 远散：无轨道束缚
+      factor = 1.3 + Math.random() * 0.9;
+    }
+    const radial = speed * factor;
+    const tangential = radial * 0.9;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     // 径向（向外）+ 切向（统一公转方向）：粒子被“甩”出核心，沿圆周切线飞出
@@ -109,7 +125,8 @@
       x: hud.x + cos * radius,
       y: hud.y + sin * radius,
       vx: cos * radial - sin * tangential,
-      vy: sin * radial + cos * tangential
+      vy: sin * radial + cos * tangential,
+      targetR
     };
     particles.push(particle);
   }
@@ -262,6 +279,9 @@
       } else if (releaseElapsed > 5200) {
         core.mode = 'on';
         core.emitCarry = 0;
+        if (!core.onGraceUntil) {
+          core.onGraceUntil = performance.now() + 3000;
+        }
       }
     }
 
@@ -307,25 +327,53 @@
           // 开启：粒子被统一公转方向“甩”出核心（无自转），带惯性
           const hdist = Math.hypot(hdx, hdy);
           if (hdist > 1) {
-            // 向外吹（背离核心）：近核强、远核弱
-            const blow = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 1.6));
-            particle.vx -= normX * blow * 0.8;
-            particle.vy -= normY * blow * 0.8;
-            // 统一切向涡流（公转方向）：粒子被带离，形成漩涡甩出感
-            const spinFalloff = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 2.2));
-            const spinForce = blow * 0.9 + spinFalloff * 0.18;
-            particle.vx += -normY * spinForce;
-            particle.vy += normX * spinForce;
+            if (particle.targetR != null) {
+              // 轨道粒子：弹簧束缚（正 delta=太远→向心拉；负=太近→向外推）
+              const delta = hdist - particle.targetR;
+              particle.vx += normX * delta * 0.11;
+              particle.vy += normY * delta * 0.11;
+              // 保持公转：切向速度锁定量
+              const targetSwirl = 0.9;
+              const tangentX = -normY;
+              const tangentY = normX;
+              const currentTangential = particle.vx * tangentX + particle.vy * tangentY;
+              const adjust = (targetSwirl - currentTangential) * 0.35;
+              particle.vx += tangentX * adjust;
+              particle.vy += tangentY * adjust;
+              particle.vx *= 0.988;
+              particle.vy *= 0.988;
+            } else {
+              // 远散粒子：向外吹 + 涡流
+              const blow = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 1.6));
+              particle.vx -= normX * blow * 0.8;
+              particle.vy -= normY * blow * 0.8;
+              const spinFalloff = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 2.2));
+              const spinForce = blow * 0.9 + spinFalloff * 0.18;
+              particle.vx += -normY * spinForce;
+              particle.vy += normX * spinForce;
+            }
           }
           particle.vx *= 0.976;
           particle.vy *= 0.976;
         } else if (core.mode === 'on') {
-          // 运行：慢速吸积 + 星环（粒子绕核心旋转，不急着被吸）
-          if (hdist < HUD_CATCH_RADIUS + p.radius) {
+          // 宽限期：刚开启的 3 秒无引力，粒子自由扩散
+          if (performance.now() < core.onGraceUntil) {
+            // 不施加任何核心力
+          } else if (hdist < HUD_CATCH_RADIUS + p.radius) {
             respawnParticle(particle);
             continue;
-          }
-          if (hdist < p.gravityRadius) {
+          } else if (particle.targetR != null && hdist > RING_INNER - 20) {
+            // 带轨道印记的粒子：维持在目标半径绕行（稳定的星环成员）
+            const delta = hdist - particle.targetR;
+            const pull = delta * 0.02;
+            const swirl = 1.0;
+            particle.vx += normX * pull;
+            particle.vy += normY * pull;
+            particle.vx += -normY * swirl;
+            particle.vy += normX * swirl;
+            particle.vx *= 0.998;
+            particle.vy *= 0.998;
+          } else if (hdist < p.gravityRadius) {
             const inRing = hdist > RING_INNER && hdist < RING_OUTER;
             const falloff = 1 - hdist / p.gravityRadius;
             if (inRing) {
