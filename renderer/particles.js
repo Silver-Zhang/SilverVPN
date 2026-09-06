@@ -356,12 +356,12 @@
           particle.vx *= 0.976;
           particle.vy *= 0.976;
         } else if (core.mode === 'on') {
-          // 引力递进：开启后 3s 无引力 → 6s 引力从 0 平滑递增到全量
+          // 引力递进：开启后 3s 无引力 → 9s 引力从 0 线性递增到全量
           const now = performance.now();
           const inGrace = now < core.onGraceUntil;
           const ramp = inGrace
             ? 0
-            : Math.min(1, (now - core.onGraceUntil) / 6000);
+            : Math.min(1, (now - core.onGraceUntil) / 9000);
           if (inGrace) {
             // 宽限期：不施加任何核心力
           } else if (hdist < HUD_CATCH_RADIUS + p.radius) {
