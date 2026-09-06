@@ -14,10 +14,23 @@
     delays: new Map(),
     filter: '',
     language: 'zh-CN',
+    bypassHosts: [],
+    profileId: '',
+    update: null,
     tunRequestPending: false,
     tunPendingEnabled: false,
     tunError: '',
     toastTimer: null
+  };
+
+  const MONITOR_WINDOW = 60;
+  const monitor = {
+    timer: null,
+    delayTimer: null,
+    up: [],
+    down: [],
+    delay: [],
+    conn: []
   };
 
   const messages = {
@@ -26,6 +39,7 @@
       global: '全局代理',
       direct: '直连模式',
       coreRunning: '核心运行中',
+      coreRunningExternal: '核心运行中（由 CLI/外部托管）',
       coreStopped: '核心未运行',
       noNode: '未选择',
       noRows: '没有可显示的节点',
@@ -64,6 +78,7 @@
       loginDone: '账号已登录，节点已更新',
       refreshedUser: '账号订阅已刷新',
       bypassSaved: '绕过地址已保存',
+      appearanceSaved: '外观已保存',
       profileSwitched: '配置方案已切换',
       networkRefreshed: '网络状态已刷新',
       detectingIp: 'Detecting outbound IP',
@@ -71,13 +86,103 @@
       accountMissing: '未登录',
       testingState: '测试中',
       pass: '通过',
-      fail: '失败'
+      fail: '失败',
+      languageLabel: '语言',
+      checkUpdateBtn: '检查更新',
+      refreshTitle: '刷新',
+      updateBellTitle: '更新提醒',
+      updateKicker: '应用更新',
+      updateTitleDefault: '发现新版本',
+      updateDescDefault: '新版本已准备好安装。',
+      installUpdateBtn: '立即更新',
+      dismissUpdateBtn: '稍后提醒',
+      kpiCoreLabel: '核心状态',
+      kpiCoreFoot: 'mihomo 运行状态',
+      kpiNodesLabel: '节点',
+      kpiNodesFoot: '当前配置可用节点',
+      kpiHttpLabel: 'HTTP 代理',
+      kpiSocksLabel: 'SOCKS 代理',
+      kpiPortFoot: '127.0.0.1 端口',
+      monitorTitle: '实时监控',
+      collapseTitle: '折叠/展开',
+      monitorTraffic: '流量',
+      monitorDelay: '当前延迟',
+      monitorConnections: '活跃连接',
+      trafficTitle: '流量统计',
+      collapseTrafficTitle: '折叠/展开流量统计',
+      refreshTrafficTitle: '刷新流量统计',
+      trafficToday: '今天',
+      trafficD3: '近 3 天',
+      trafficD7: '近 7 天',
+      trafficD30: '近 30 天',
+      trafficEmpty: '暂无流量记录，使用代理后将自动统计',
+      currentNodeKicker: '当前节点',
+      notCheckedYet: '尚未检测',
+      silverStateOff: '未连接',
+      networkDirect: '直连出口',
+      networkSilver: 'SilverVPN 出口',
+      networkSystemProxy: '系统代理',
+      networkDefaultRoute: '默认路由',
+      networkTunnel: '隧道网卡',
+      networkPorts: '本地端口',
+      refreshNetworkTitle: '刷新网络状态',
+      portGroupLabel: '代理端口组（HTTP 基础端口）',
+      applyPortsBtn: '应用并重启',
+      portHintPrefix: '当前',
+      portHintSuffix: '修改后端口写入 server.json，与 CLI（svpn config ports）同步。',
+      nodeTitle: '节点列表',
+      nodeHeaderName: '节点',
+      nodeHeaderType: '协议',
+      nodeHeaderDelay: '延迟',
+      nodeHeaderAction: '操作',
+      profileSourceLabel: '来源',
+      profileCountLabel: '节点数',
+      profileUpdatedLabel: '更新',
+      renameProfileBtn: '重命名',
+      deleteProfileBtn: '删除',
+      profileEmpty: '暂无已保存方案，导入后自动创建',
+      bypassDefaultsSummary: '内置默认绕过',
+      bypassDefaultsDesc: '内网网段和 localhost',
+      testsPending: '待测试',
+      testsOutputIdle: '等待测试',
+      testButtonTitle: '测试',
+      logEmpty: '暂无日志',
+      loginSubmit: '登录并更新',
+      themeLabel: '主题',
+      themeVisionName: '深蓝',
+      themeVisionTitle: 'Vision 深蓝',
+      themeMidnightName: '午夜',
+      themeMidnightTitle: '午夜黑蓝',
+      themeAuroraName: '极光',
+      themeAuroraTitle: '极光紫青',
+      themeDayName: '晴空',
+      themeDayTitle: '晴空白蓝',
+      themeLightName: '浅色',
+      themeLightTitle: '浅色玻璃',
+      themeSunriseName: '晨曦',
+      themeSunriseTitle: '晨曦暖白',
+      themeEmberName: '暖阳',
+      themeEmberTitle: '暖阳橙',
+      backgroundLabel: '背景',
+      uploadBgBtn: '上传图片',
+      clearBgBtn: '清除',
+      glassLabel: '玻璃透明度',
+      glassHint: '透明度越低，背景越穿透；图片仅保存在本机。',
+      particlesLabel: '粒子特效',
+      particlesToggleText: '动态粒子 / 星轨连线',
+      particlesOffHint: '关闭后不消耗渲染性能。',
+      particlesIntensityLabel: '特效强度',
+      particlesIntensityHint: '控制粒子数量、速度与星轨连线密度。',
+      pathsDataDir: '数据目录',
+      pathsConfigFile: '配置文件',
+      pathsControlApi: '控制 API'
     },
     en: {
       smart: 'Smart',
       global: 'Global',
       direct: 'Direct',
       coreRunning: 'Core running',
+      coreRunningExternal: 'Core running (managed externally)',
       coreStopped: 'Core stopped',
       noNode: 'Not selected',
       noRows: 'No nodes',
@@ -116,6 +221,7 @@
       loginDone: 'Logged in and updated',
       refreshedUser: 'Account subscription refreshed',
       bypassSaved: 'Bypass list saved',
+      appearanceSaved: 'Appearance saved',
       profileSwitched: 'Profile switched',
       networkRefreshed: 'Network status refreshed',
       detectingIp: 'Detecting outbound IP',
@@ -123,7 +229,96 @@
       accountMissing: 'Not signed in',
       testingState: 'Testing',
       pass: 'Passed',
-      fail: 'Failed'
+      fail: 'Failed',
+      languageLabel: 'Language',
+      checkUpdateBtn: 'Check updates',
+      refreshTitle: 'Refresh',
+      updateBellTitle: 'Update notification',
+      updateKicker: 'App update',
+      updateTitleDefault: 'New version available',
+      updateDescDefault: 'A new version is ready to install.',
+      installUpdateBtn: 'Install now',
+      dismissUpdateBtn: 'Later',
+      kpiCoreLabel: 'Core',
+      kpiCoreFoot: 'mihomo core status',
+      kpiNodesLabel: 'Nodes',
+      kpiNodesFoot: 'Available nodes',
+      kpiHttpLabel: 'HTTP proxy',
+      kpiSocksLabel: 'SOCKS proxy',
+      kpiPortFoot: '127.0.0.1 port',
+      monitorTitle: 'Live monitor',
+      collapseTitle: 'Collapse / expand',
+      monitorTraffic: 'Traffic',
+      monitorDelay: 'Delay',
+      monitorConnections: 'Connections',
+      trafficTitle: 'Traffic stats',
+      collapseTrafficTitle: 'Collapse / expand traffic stats',
+      refreshTrafficTitle: 'Refresh traffic stats',
+      trafficToday: 'Today',
+      trafficD3: 'Last 3 days',
+      trafficD7: 'Last 7 days',
+      trafficD30: 'Last 30 days',
+      trafficEmpty: 'No traffic recorded yet; usage is tracked automatically.',
+      currentNodeKicker: 'Current node',
+      notCheckedYet: 'Not checked yet',
+      silverStateOff: 'Disconnected',
+      networkDirect: 'Direct egress',
+      networkSilver: 'SilverVPN egress',
+      networkSystemProxy: 'System proxy',
+      networkDefaultRoute: 'Default route',
+      networkTunnel: 'Tunnel interface',
+      networkPorts: 'Local ports',
+      refreshNetworkTitle: 'Refresh network status',
+      portGroupLabel: 'Proxy port group (HTTP base)',
+      applyPortsBtn: 'Apply & restart',
+      portHintPrefix: 'Current',
+      portHintSuffix: 'Ports are saved to server.json and synced with the CLI (svpn config ports).',
+      nodeTitle: 'Nodes',
+      nodeHeaderName: 'Node',
+      nodeHeaderType: 'Type',
+      nodeHeaderDelay: 'Delay',
+      nodeHeaderAction: 'Action',
+      profileSourceLabel: 'Source',
+      profileCountLabel: 'Nodes',
+      profileUpdatedLabel: 'Updated',
+      renameProfileBtn: 'Rename',
+      deleteProfileBtn: 'Delete',
+      profileEmpty: 'No saved profiles; importing creates one.',
+      bypassDefaultsSummary: 'Built-in bypass',
+      bypassDefaultsDesc: 'LAN ranges and localhost',
+      testsPending: 'Idle',
+      testsOutputIdle: 'Waiting for tests',
+      testButtonTitle: 'Test',
+      logEmpty: 'No logs yet',
+      loginSubmit: 'Sign in & update',
+      themeLabel: 'Theme',
+      themeVisionName: 'Vision',
+      themeVisionTitle: 'Vision deep blue',
+      themeMidnightName: 'Midnight',
+      themeMidnightTitle: 'Midnight black-blue',
+      themeAuroraName: 'Aurora',
+      themeAuroraTitle: 'Aurora purple-cyan',
+      themeDayName: 'Day',
+      themeDayTitle: 'Day sky blue',
+      themeLightName: 'Light',
+      themeLightTitle: 'Light glass',
+      themeSunriseName: 'Sunrise',
+      themeSunriseTitle: 'Sunrise warm white',
+      themeEmberName: 'Ember',
+      themeEmberTitle: 'Ember orange',
+      backgroundLabel: 'Background',
+      uploadBgBtn: 'Upload image',
+      clearBgBtn: 'Clear',
+      glassLabel: 'Glass opacity',
+      glassHint: 'Lower opacity lets the background show through; images stay on this device.',
+      particlesLabel: 'Particles',
+      particlesToggleText: 'Particles & constellation',
+      particlesOffHint: 'Disable to save rendering performance.',
+      particlesIntensityLabel: 'Intensity',
+      particlesIntensityHint: 'Controls particle count, speed, and link density.',
+      pathsDataDir: 'Data directory',
+      pathsConfigFile: 'Config file',
+      pathsControlApi: 'Control API'
     }
   };
 
@@ -183,7 +378,8 @@
       ['#importForm button[type="submit"]', english ? 'Import subscription' : '导入订阅'],
       ['label[for="profileSelect"]', english ? 'Profile' : '配置方案'],
       ['#bypassTitle', english ? 'Direct bypass' : '直连/绕过地址'],
-      ['#saveBypass', english ? 'Save' : '保存'],
+      ['#addBypass', english ? 'Add' : '添加'],
+      ['#appearanceTitle', english ? 'Appearance' : '外观'],
       ['#testsTitle', english ? 'Connectivity' : '连通性测试'],
       ['#detectIp', english ? 'Outbound IP' : '出口 IP'],
       ['#pathsTitle', english ? 'Paths' : '路径'],
@@ -194,15 +390,32 @@
       ['#networkTitle', english ? 'Network status' : '网络状态']
     ];
     pairs.forEach(([selector, value]) => setText(selector, value));
+    $$('[data-i18n]').forEach(node => {
+      const key = node.getAttribute('data-i18n');
+      if (key) {
+        node.textContent = t(key);
+      }
+    });
+    $$('[data-i18n-title]').forEach(node => {
+      const key = node.getAttribute('data-i18n-title');
+      if (key) {
+        node.title = t(key);
+      }
+    });
+    refreshPortHint();
     $('#apiBase').placeholder = english ? 'Optional API base URL' : '服务端 URL（可选）';
     $('#username').placeholder = english ? 'Account email' : '账号';
     $('#password').placeholder = english ? 'Password' : '密码';
     $('#nodeSearch').placeholder = english ? 'Search nodes' : '搜索节点';
     $('#subscriptionSource').placeholder = english ? 'Subscription URL / sub://...' : '订阅 URL / sub://...';
     $('#customTestUrl').placeholder = 'https://example.com';
-    $('#bypassHosts').placeholder = english
-      ? 'One host or CIDR per line, for example:\ngitlab.example.org\n*.example.org\n192.168.0.0/16'
-      : '每行一个域名或网段，例如：\ngitlab.example.org\n*.example.org\n192.168.0.0/16';
+    $('#bypassInput').placeholder = english
+      ? 'Domain or CIDR, e.g. example.com, *.corp.com, 192.168.0.0/16'
+      : '域名或网段，例如 example.com、*.corp.com、192.168.0.0/16';
+    const bypassEmpty = $('#bypassEmpty');
+    if (bypassEmpty) {
+      bypassEmpty.textContent = english ? 'No custom bypass hosts' : '暂无自定义绕过地址';
+    }
     if (state.dashboard) {
       renderTunStatus(state.dashboard.settings || {}, state.dashboard.tun || {});
     }
@@ -250,6 +463,17 @@
     if (tone === 'danger') {
       node.classList.add('badge-danger');
     }
+  }
+
+  function refreshPortHint() {
+    const hint = $('#portHint');
+    if (!hint) {
+      return;
+    }
+    const info = state.portInfo || {};
+    const read = key => (info[key] === undefined || info[key] === null || info[key] === '' ? '-' : info[key]);
+    const separator = state.language === 'en' ? '. ' : '。';
+    hint.innerHTML = `${t('portHintPrefix')} HTTP <b>${read('http')}</b> / SOCKS <b>${read('socks')}</b> / API <b>${read('api')}</b> / Core <b>${read('core')}</b>${separator}${t('portHintSuffix')}`;
   }
 
   function normalizeTunConflicts(conflicts) {
@@ -380,6 +604,141 @@
       .replace(/'/g, '&#39;');
   }
 
+  function applyAppearance(settings) {
+    const theme = settings.theme || 'vision';
+    document.body.dataset.theme = theme;
+    const opacity = typeof settings.glassOpacity === 'number' ? settings.glassOpacity : 0.9;
+    document.body.style.setProperty('--card-alpha', String(opacity));
+    const slider = $('#glassOpacity');
+    if (slider && document.activeElement !== slider) {
+      slider.value = String(Math.round(opacity * 100));
+    }
+    const glassValue = $('#glassValue');
+    if (glassValue) {
+      glassValue.textContent = `${Math.round(opacity * 100)}%`;
+    }
+    const particlesEnabled = settings.particlesEnabled !== false;
+    const particlesIntensity = typeof settings.particlesIntensity === 'number' ? settings.particlesIntensity : 0.6;
+    const toggle = $('#particlesEnabled');
+    if (toggle && document.activeElement !== toggle) {
+      toggle.checked = particlesEnabled;
+    }
+    const intensityInput = $('#particlesIntensity');
+    if (intensityInput && document.activeElement !== intensityInput) {
+      intensityInput.value = String(Math.round(particlesIntensity * 100));
+    }
+    const particlesValue = $('#particlesValue');
+    if (particlesValue) {
+      particlesValue.textContent = `${Math.round(particlesIntensity * 100)}%`;
+    }
+    if (window.silverVpnParticles) {
+      window.silverVpnParticles.apply({ enabled: particlesEnabled, intensity: particlesIntensity });
+    }
+    $$('.theme-chip').forEach(chip => {
+      chip.classList.toggle('active', chip.dataset.theme === theme);
+    });
+    if (settings.bgImage) {
+      document.body.style.setProperty('--user-bg', `url("${settings.bgImage}")`);
+    } else {
+      document.body.style.removeProperty('--user-bg');
+    }
+  }
+
+  function readImageDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const image = new Image();
+        image.onload = () => {
+          const maxWidth = 1600;
+          const scale = Math.min(1, maxWidth / image.width);
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(image.width * scale);
+          canvas.height = Math.round(image.height * scale);
+          canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        };
+        image.onerror = () => reject(new Error(state.language === 'en' ? 'Unable to read the image' : '无法读取图片'));
+        image.src = String(reader.result);
+      };
+      reader.onerror = () => reject(new Error(state.language === 'en' ? 'Unable to read the file' : '无法读取文件'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function renderTrafficStats(stats) {
+    const ranges = (stats && stats.ranges) || {};
+    const total = value => (value ? value.up + value.down : 0);
+    const today = total(ranges.today);
+    const d3 = total(ranges.d3);
+    const d7 = total(ranges.d7);
+    const d30 = total(ranges.d30);
+    setText('#tToday', formatBytes(today));
+    setText('#tD3', formatBytes(d3));
+    setText('#tD7', formatBytes(d7));
+    setText('#tD30', formatBytes(d30));
+    const refMax = Math.max(d30, 1);
+    const setBar = (id, value) => {
+      const bar = $(id);
+      if (bar) {
+        bar.style.width = `${Math.min(100, Math.round((value / refMax) * 100))}%`;
+      }
+    };
+    setBar('#tTodayBar', today);
+    setBar('#tD3Bar', d3);
+    setBar('#tD7Bar', d7);
+    const nodes = $('#trafficNodes');
+    if (!nodes) {
+      return;
+    }
+    const rows = (stats && stats.nodes) || [];
+    nodes.innerHTML = rows.length
+      ? rows
+        .map(item => {
+          const total30 = total(item.d30);
+          const width = Math.min(100, Math.round((total30 / refMax) * 100));
+          return `
+            <div class="traffic-card">
+              <div class="tc-head">
+                <span class="tc-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                <span class="tc-total">${formatBytes(total30)}</span>
+              </div>
+              <div class="tc-track"><i style="width:${width}%"></i></div>
+              <div class="tc-cells">
+                <span><b>${state.language === 'en' ? 'Today' : '今天'}</b>${formatBytes(total(item.today))}</span>
+                <span><b>3 ${state.language === 'en' ? 'd' : '天'}</b>${formatBytes(total(item.d3))}</span>
+                <span><b>7 ${state.language === 'en' ? 'd' : '天'}</b>${formatBytes(total(item.d7))}</span>
+                <span><b>30 ${state.language === 'en' ? 'd' : '天'}</b>${formatBytes(total30)}</span>
+              </div>
+            </div>`;
+        })
+        .join('')
+      : `<div class="traffic-empty">${t('trafficEmpty')}</div>`;
+  }
+
+  async function loadTrafficStats() {
+    const button = $('#refreshTrafficStats');
+    if (button) {
+      button.classList.add('testing');
+    }
+    const startedAt = Date.now();
+    try {
+      const stats = await panda.invoke('traffic-stats');
+      renderTrafficStats(stats);
+    } catch (_error) {
+      // keep the previous view
+    } finally {
+      // 保证旋转动画至少可见 450ms，避免一闪而过
+      const remaining = 450 - (Date.now() - startedAt);
+      if (remaining > 0) {
+        await new Promise(resolve => setTimeout(resolve, remaining));
+      }
+      if (button) {
+        button.classList.remove('testing');
+      }
+    }
+  }
+
   function renderDashboard(dashboard) {
     state.dashboard = dashboard;
     state.tunError = '';
@@ -395,10 +754,31 @@
     $('#languageSelect').value = state.language;
     applyLanguage();
 
-    setText('#coreState', core.running ? t('coreRunning') : t('coreStopped'));
+    setText('#coreState', core.running ? (core.externallyManaged ? t('coreRunningExternal') : t('coreRunning')) : t('coreStopped'));
+    setText('#kpiCore', core.running ? t('coreRunning') : t('coreStopped'));
+    const kpiCoreCard = $('#kpiCoreCard');
+    if (kpiCoreCard) {
+      kpiCoreCard.classList.toggle('is-on', Boolean(core.running));
+      kpiCoreCard.classList.toggle('is-off', !core.running);
+      const kpiCoreValue = $('#kpiCore');
+      if (kpiCoreValue) {
+        kpiCoreValue.classList.toggle('dim', !core.running);
+      }
+    }
     setText('#currentProxy', proxies.current || t('noNode'));
     setText('#httpPort', config.httpPort || '-');
     setText('#socksPort', config.socksPort || '-');
+    const portBaseInput = $('#portBaseInput');
+    if (portBaseInput && document.activeElement !== portBaseInput) {
+      portBaseInput.value = config.portBase || config.httpPort || '';
+    }
+    state.portInfo = {
+      http: config.httpPort,
+      socks: config.socksPort,
+      api: config.apiPort,
+      core: config.corePort
+    };
+    refreshPortHint();
     setText('#proxyCount', proxies.count || 0);
     setText('#profileSource', profile.name || profile.sourceType || settings.currentProfile || '-');
     setText('#profileCount', profile.proxyCount == null ? proxies.count || '-' : profile.proxyCount);
@@ -406,7 +786,7 @@
     setText('#dataDir', shortPath(config.dataDir));
     setText('#configFile', shortPath(config.activeConfigFile));
     setText('#controlApi', core.control || '-');
-    setText('#coreLog', core.logTail ? core.logTail.trim() : '暂无日志');
+    setText('#coreLog', core.logTail ? core.logTail.trim() : t('logEmpty'));
     setBadge('#modeBadge', modeText(mode), core.running ? undefined : 'warn');
     setBadge('#accountState', auth && auth.username ? auth.username : t('accountMissing'), auth && auth.username ? undefined : 'muted');
 
@@ -422,26 +802,159 @@
     }
 
     renderProfiles(dashboard);
+    applyAppearance(settings);
+    applyCollapsedState(settings);
     renderBypass(settings);
     renderNodes();
   }
 
   function renderProfiles(dashboard) {
-    const select = $('#profileSelect');
+    const tabs = $('#profileTabs');
+    if (!tabs) {
+      return;
+    }
     const profiles = dashboard.subscriptions || [];
-    const currentId = dashboard.activeProfile && dashboard.activeProfile.id ? dashboard.activeProfile.id : dashboard.settings.currentProfileId || '';
-    select.innerHTML = [
-      `<option value="">${state.language === 'en' ? 'Current config' : '当前配置'}</option>`,
-      ...profiles.map(profile => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name || profile.kind || profile.id)}</option>`)
-    ].join('');
-    select.value = currentId;
+    const currentId = dashboard.activeProfile && dashboard.activeProfile.id
+      ? dashboard.activeProfile.id
+      : (dashboard.settings && dashboard.settings.currentProfileId) || '';
+    state.profileId = currentId;
+    if (!profiles.length) {
+      tabs.innerHTML = `<span class="profile-empty">${t('profileEmpty')}</span>`;
+      return;
+    }
+    tabs.innerHTML = profiles
+      .map(profile => {
+        const active = profile.id === currentId;
+        return `<button class="profile-tab${active ? ' active' : ''}" data-id="${escapeHtml(profile.id)}" type="button" title="${escapeHtml(profile.name || '')}">${escapeHtml(profile.name || profile.kind || profile.id)}</button>`;
+      })
+      .join('');
+  }
+
+  function formatBytes(value) {
+    const bytes = Number(value) || 0;
+    if (bytes < 1024) return `${bytes.toFixed(0)} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  }
+
+  function pushWindow(values, value) {
+    values.push(Number(value) || 0);
+    if (values.length > MONITOR_WINDOW) values.shift();
+  }
+
+  function renderSparkline(polyline, values, fixedMax) {
+    if (!polyline) return;
+    if (!values.length) {
+      polyline.setAttribute('points', '');
+      return;
+    }
+    const width = 240;
+    const height = 64;
+    const pad = 3;
+    const max = Math.max(fixedMax || 0, ...values) || 1;
+    const step = width / (MONITOR_WINDOW - 1);
+    const offset = (MONITOR_WINDOW - values.length) * step;
+    const points = values
+      .map((value, index) => {
+        const x = index * step + offset;
+        const y = height - pad - (value / max) * (height - pad * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(' ');
+    polyline.setAttribute('points', points);
+  }
+
+  async function sampleMonitor() {
+    try {
+      const stats = await panda.invoke('monitor-stats');
+      if (!stats || stats.inactive) {
+        return;
+      }
+      pushWindow(monitor.up, stats.up);
+      pushWindow(monitor.down, stats.down);
+      pushWindow(monitor.conn, stats.connections);
+      setText('#trafficValue', `${formatBytes(stats.down)} ↓ / ${formatBytes(stats.up)} ↑`);
+      setText('#connectionsValue', stats.connections);
+      renderSparkline($('#sparkUp'), monitor.up, 0);
+      renderSparkline($('#sparkDown'), monitor.down, 0);
+      renderSparkline($('#sparkConn'), monitor.conn, 0);
+    } catch (_error) {
+      // core not ready yet; keep the last window
+    }
+  }
+
+  async function sampleDelay() {
+    try {
+      const value = await panda.invoke('monitor-delay');
+      if (value && Number.isFinite(value.delay)) {
+        pushWindow(monitor.delay, value.delay);
+        setText('#delayValue', `${value.delay} ms`);
+        renderSparkline($('#sparkDelay'), monitor.delay, 1500);
+      }
+    } catch (_error) {
+      // ignore
+    }
+  }
+
+  function startMonitor() {
+    stopMonitor();
+    sampleMonitor();
+    sampleDelay();
+    monitor.timer = setInterval(sampleMonitor, 1000);
+    monitor.delayTimer = setInterval(sampleDelay, 5000);
+  }
+
+  function stopMonitor() {
+    if (monitor.timer) clearInterval(monitor.timer);
+    if (monitor.delayTimer) clearInterval(monitor.delayTimer);
+    monitor.timer = null;
+    monitor.delayTimer = null;
+  }
+
+  function setMonitorCollapsed(collapsed) {
+    const body = $('#monitorBody');
+    const toggle = $('#toggleMonitor');
+    if (body) body.hidden = collapsed;
+    if (toggle) toggle.textContent = collapsed ? '▸' : '▾';
+    if (collapsed) {
+      stopMonitor();
+    } else {
+      startMonitor();
+    }
+  }
+
+  function setTrafficCollapsed(collapsed) {
+    const body = $('#trafficBody');
+    const toggle = $('#toggleTraffic');
+    if (body) body.hidden = collapsed;
+    if (toggle) toggle.textContent = collapsed ? '▸' : '▾';
+  }
+
+  function applyCollapsedState(settings) {
+    setMonitorCollapsed(Boolean(settings.monitorCollapsed));
+    setTrafficCollapsed(Boolean(settings.trafficCollapsed));
+  }
+
+  function persistCollapsedState(key, value) {
+    callAction('set-appearance', { [key]: value }).catch(() => {});
   }
 
   function renderBypass(settings) {
-    const custom = settings.bypassHosts || [];
-    const textarea = $('#bypassHosts');
-    if (document.activeElement !== textarea) {
-      textarea.value = custom.join('\n');
+    const custom = Array.isArray(settings.bypassHosts) ? settings.bypassHosts : [];
+    state.bypassHosts = custom;
+    const list = $('#bypassList');
+    const empty = $('#bypassEmpty');
+    if (list) {
+      list.innerHTML = custom
+        .map(host => `
+          <li class="bypass-row">
+            <span class="bypass-host" title="${escapeHtml(host)}">${escapeHtml(host)}</span>
+            <button class="bypass-remove" type="button" data-host="${escapeHtml(host)}" aria-label="删除">&times;</button>
+          </li>`)
+        .join('');
+    }
+    if (empty) {
+      empty.hidden = custom.length > 0;
     }
     setText('#defaultBypassHosts', (settings.defaultBypassHosts || []).join(', '));
   }
@@ -461,6 +974,10 @@
     const ports = status.listeningPorts || [];
     const warnings = status.conflicts || [];
     const checkedAt = status.checkedAt ? new Date(status.checkedAt).toLocaleTimeString() : '-';
+    const networkPanel = $('#networkPanel');
+    if (networkPanel) {
+      networkPanel.classList.toggle('state-off', !silver.coreRunning);
+    }
 
     setText('#networkCheckedAt', `${state.language === 'en' ? 'Updated' : '更新'} ${checkedAt}`);
     setBadge(
@@ -486,6 +1003,25 @@
     const warningNode = $('#networkWarnings');
     warningNode.hidden = warnings.length === 0;
     warningNode.innerHTML = warnings.map(item => `<div>${escapeHtml(item)}</div>`).join('');
+  }
+
+  async function addBypassHost() {
+    const input = $('#bypassInput');
+    const value = String((input && input.value) || '').trim();
+    if (!value) {
+      return;
+    }
+    const existing = state.bypassHosts || [];
+    const values = value.split(/[\s,]+/).filter(Boolean);
+    const added = values.filter(item => !existing.includes(item));
+    if (!added.length) {
+      toast(state.language === 'en' ? 'Already in the list' : '已在列表中');
+      return;
+    }
+    await callAction('set-bypass-hosts', { hosts: [...existing, ...added] }, t('bypassSaved'));
+    if (input) {
+      input.value = '';
+    }
   }
 
   async function loadNetworkStatus(showToast) {
@@ -578,7 +1114,11 @@
     }
   }
 
-  async function runUrlTest(url) {
+  async function runUrlTest(url, button) {
+    if (button) {
+      button.classList.add('testing');
+      button.disabled = true;
+    }
     setBadge('#testState', t('testingState'), 'warn');
     setText('#testOutput', `${t('testing')} ${url}`);
     try {
@@ -601,10 +1141,19 @@
     } catch (error) {
       setBadge('#testState', t('fail'), 'danger');
       setText('#testOutput', error.message || String(error));
+    } finally {
+      if (button) {
+        button.classList.remove('testing');
+        button.disabled = false;
+      }
     }
   }
 
-  async function runIpTest() {
+  async function runIpTest(button) {
+    if (button) {
+      button.classList.add('testing');
+      button.disabled = true;
+    }
     setBadge('#testState', t('testingState'), 'warn');
     setText('#testOutput', t('detectingIp'));
     try {
@@ -625,10 +1174,19 @@
     } catch (error) {
       setBadge('#testState', t('fail'), 'danger');
       setText('#testOutput', error.message || String(error));
+    } finally {
+      if (button) {
+        button.classList.remove('testing');
+        button.disabled = false;
+      }
     }
   }
 
-  async function runLanTest() {
+  async function runLanTest(button) {
+    if (button) {
+      button.classList.add('testing');
+      button.disabled = true;
+    }
     setBadge('#testState', t('testingState'), 'warn');
     setText('#testOutput', `${t('testing')} 192.168.9.27:22`);
     try {
@@ -649,12 +1207,69 @@
     } catch (error) {
       setBadge('#testState', t('fail'), 'danger');
       setText('#testOutput', error.message || String(error));
+    } finally {
+      if (button) {
+        button.classList.remove('testing');
+        button.disabled = false;
+      }
     }
   }
 
   function bindEvents() {
     $('#refreshDashboard').addEventListener('click', () => loadDashboard(false));
     $('#refreshNetwork').addEventListener('click', () => loadNetworkStatus(true));
+    $('#applyPorts').addEventListener('click', async () => {
+      const base = Number($('#portBaseInput').value);
+      if (!Number.isInteger(base) || base < 1024 || base > 65525) {
+        toast(state.language === 'en' ? 'Invalid port base (1024-65525).' : '无效的端口基础值（1024-65525）。');
+        return;
+      }
+      const button = $('#applyPorts');
+      if (button) {
+        button.classList.add('testing');
+        button.textContent = '';
+      }
+      try {
+        const result = await callAction('set-ports', { base }, state.language === 'en' ? 'Ports updated' : '端口已更新');
+        if (result && result.message) {
+          toast(result.message);
+        }
+      } catch (error) {
+        toast(error.message || String(error));
+      } finally {
+        if (button) {
+          button.classList.remove('testing');
+          button.textContent = t('applyPortsBtn');
+        }
+      }
+    });
+    $('#refreshTrafficStats').addEventListener('click', () => loadTrafficStats());
+    $('#checkUpdate').addEventListener('click', () => loadUpdate(false));
+    $('#installUpdate').addEventListener('click', async () => {
+      if (!window.confirm(state.language === 'en' ? 'Install the update now? The app will restart after installation.' : '现在安装更新吗？安装完成后将重启应用。')) {
+        return;
+      }
+      setLoading(true);
+      try {
+        const result = await panda.invoke('install-update', {});
+        if (result && result.restartRequired) {
+          toast(state.language === 'en' ? 'Update installed. Restart SilverVPN to finish.' : '更新已安装，请重启 SilverVPN 完成更新。');
+        }
+      } catch (error) {
+        toast(error.message || String(error));
+      } finally {
+        setLoading(false);
+      }
+    });
+    $('#dismissUpdate').addEventListener('click', () => {
+      if (!state.update) {
+        return;
+      }
+      panda.invoke('dismiss-update', { version: state.update.latestVersion }).finally(() => {
+        state.update.dismissed = true;
+        renderUpdate(state.update);
+      });
+    });
     $('#refreshTunStatus').addEventListener('click', async () => {
       await loadDashboard(true);
       toast(t('tunRefreshed'));
@@ -665,8 +1280,27 @@
       }
       callAction('restore-default-network', {}, t('networkRestored'));
     });
-    $('#startCore').addEventListener('click', () => callAction('start-core', {}, t('startOk')));
-    $('#stopCore').addEventListener('click', () => callAction('stop-core', {}, t('stopOk')));
+    $('#startCore').addEventListener('click', async () => {
+      await callAction('start-core', {}, t('startOk'));
+      loadNetworkStatus(false);
+    });
+    $('#stopCore').addEventListener('click', async () => {
+      try {
+        const result = await callAction('stop-core', {}, null);
+        const dashboard = result && (result.dashboard || (result.appName ? result : null));
+        const core = (dashboard && dashboard.core) || {};
+        if (core.externallyManaged && core.running) {
+          toast(state.language === 'en'
+            ? 'Core is managed by the CLI or another instance; use `svpn off` to stop it.'
+            : '核心由 CLI 或外部实例托管，无法从 GUI 停止；请在终端执行 svpn off');
+        } else {
+          toast(t('stopOk'));
+        }
+        loadNetworkStatus(false);
+      } catch (error) {
+        toast(error.message || String(error));
+      }
+    });
     $('#openConfig').addEventListener('click', () => callAction('open-config-dir', {}, t('configOpened')));
     $('#openLogs').addEventListener('click', () => callAction('open-logs-dir', {}, t('logsOpened')));
     $('#languageSelect').addEventListener('change', event => {
@@ -709,22 +1343,33 @@
 
     $('#delayAll').addEventListener('click', async () => {
       const names = getRows()
-        .slice(0, 60)
+        .slice(0, 120)
         .map(row => row.name);
       if (!names.length) {
         toast(t('noDelayNodes'));
         return;
       }
-      setLoading(true);
+      const button = $('#delayAll');
+      const originalText = button.textContent;
+      button.disabled = true;
+      button.classList.add('progress-testing');
       try {
-        const results = await panda.invoke('check-delays', { names });
-        results.forEach(item => state.delays.set(item.name, item.delay));
-        renderNodes();
+        let done = 0;
+        for (let index = 0; index < names.length; index += 12) {
+          const chunk = names.slice(index, index + 12);
+          const results = await panda.invoke('check-delays', { names: chunk });
+          results.forEach(item => state.delays.set(item.name, item.delay));
+          done += chunk.length;
+          button.textContent = `${state.language === 'en' ? 'Testing' : '测试中'} ${done}/${names.length}`;
+          renderNodes();
+        }
         toast(t('delayDone'));
       } catch (error) {
         toast(error.message || String(error));
       } finally {
-        setLoading(false);
+        button.disabled = false;
+        button.classList.remove('progress-testing');
+        button.textContent = originalText;
       }
     });
 
@@ -746,13 +1391,117 @@
     });
 
     $('#importFile').addEventListener('click', () => callAction('import-file', {}, t('fileImported')));
-    $('#profileSelect').addEventListener('change', event => {
-      if (event.target.value) {
-        callAction('switch-profile', { id: event.target.value }, t('profileSwitched'));
+    $('#profileTabs').addEventListener('click', event => {
+      const tab = event.target.closest('.profile-tab');
+      if (tab) {
+        callAction('switch-profile', { id: tab.dataset.id }, t('profileSwitched'));
       }
     });
-    $('#saveBypass').addEventListener('click', () => {
-      callAction('set-bypass-hosts', { text: $('#bypassHosts').value }, t('bypassSaved'));
+    $('#renameProfile').addEventListener('click', () => {
+      const id = state.profileId;
+      const profile = (state.dashboard && state.dashboard.subscriptions || []).find(item => item.id === id);
+      if (!profile) {
+        toast(state.language === 'en' ? 'Select a saved profile first' : '请先选择已保存的配置方案');
+        return;
+      }
+      const name = window.prompt(state.language === 'en' ? 'Profile name' : '配置方案名称', profile.name || '');
+      if (name && name.trim()) {
+        callAction('rename-profile', { id, name: name.trim() }, state.language === 'en' ? 'Profile renamed' : '配置方案已重命名');
+      }
+    });
+    $('#deleteProfile').addEventListener('click', () => {
+      const id = state.profileId;
+      const activeId = state.dashboard && state.dashboard.settings && state.dashboard.settings.currentProfileId;
+      if (!id) {
+        toast(state.language === 'en' ? 'Select a saved profile first' : '请先选择已保存的配置方案');
+        return;
+      }
+      if (id === activeId) {
+        toast(state.language === 'en' ? 'Switch to another profile before deleting this one' : '请先切换到其他方案，再删除当前方案');
+        return;
+      }
+      if (window.confirm(state.language === 'en' ? 'Delete this saved profile? This cannot be undone.' : '确定删除这个已保存的配置方案吗？此操作不可撤销。')) {
+        callAction('delete-profile', { id }, state.language === 'en' ? 'Profile deleted' : '配置方案已删除');
+      }
+    });
+    $('#toggleMonitor').addEventListener('click', () => {
+      const body = $('#monitorBody');
+      const collapsed = !(body && body.hidden);
+      setMonitorCollapsed(collapsed);
+      persistCollapsedState('monitorCollapsed', collapsed);
+    });
+    $('#toggleTraffic').addEventListener('click', () => {
+      const body = $('#trafficBody');
+      const collapsed = !(body && body.hidden);
+      setTrafficCollapsed(collapsed);
+      persistCollapsedState('trafficCollapsed', collapsed);
+    });
+    $('#addBypass').addEventListener('click', () => addBypassHost());
+    $('#bypassInput').addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addBypassHost();
+      }
+    });
+    $('#bypassList').addEventListener('click', event => {
+      const button = event.target.closest('.bypass-remove');
+      if (!button) {
+        return;
+      }
+      const host = button.dataset.host;
+      const next = (state.bypassHosts || []).filter(item => item !== host);
+      callAction('set-bypass-hosts', { hosts: next }, t('bypassSaved'));
+    });
+
+    $$('.theme-chip').forEach(chip => {
+      chip.addEventListener('click', () => callAction('set-appearance', { theme: chip.dataset.theme }, t('appearanceSaved')));
+    });
+    $('#uploadBg').addEventListener('click', () => $('#bgFileInput').click());
+    $('#bgFileInput').addEventListener('change', async event => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) {
+        return;
+      }
+      try {
+        const dataUrl = await readImageDataUrl(file);
+        await callAction('set-appearance', { bgImage: dataUrl }, t('appearanceSaved'));
+      } catch (error) {
+        toast(error.message || String(error));
+      } finally {
+        event.target.value = '';
+      }
+    });
+    $('#clearBg').addEventListener('click', () => callAction('set-appearance', { bgImage: '' }, t('appearanceSaved')));
+    $('#glassOpacity').addEventListener('input', event => {
+      const alpha = Number(event.target.value) / 100;
+      document.body.style.setProperty('--card-alpha', String(alpha));
+      const value = $('#glassValue');
+      if (value) {
+        value.textContent = `${event.target.value}%`;
+      }
+    });
+    $('#glassOpacity').addEventListener('change', event => {
+      callAction('set-appearance', { glassOpacity: Number(event.target.value) / 100 }, t('appearanceSaved'));
+    });
+    $('#particlesEnabled').addEventListener('change', event => {
+      const enabled = event.target.checked;
+      if (window.silverVpnParticles) {
+        window.silverVpnParticles.apply({ enabled });
+      }
+      callAction('set-appearance', { particlesEnabled: enabled }, t('appearanceSaved'));
+    });
+    $('#particlesIntensity').addEventListener('input', event => {
+      const value = Number(event.target.value);
+      if (window.silverVpnParticles) {
+        window.silverVpnParticles.apply({ intensity: value / 100 });
+      }
+      const label = $('#particlesValue');
+      if (label) {
+        label.textContent = `${value}%`;
+      }
+    });
+    $('#particlesIntensity').addEventListener('change', event => {
+      callAction('set-appearance', { particlesIntensity: Number(event.target.value) / 100 }, t('appearanceSaved'));
     });
 
     $('#loginForm').addEventListener('submit', event => {
@@ -775,13 +1524,13 @@
     });
 
     $$('[data-test-url]').forEach(button => {
-      button.addEventListener('click', () => runUrlTest(button.dataset.testUrl));
+      button.addEventListener('click', () => runUrlTest(button.dataset.testUrl, button));
     });
-    $('#detectIp').addEventListener('click', runIpTest);
-    $('#testLan').addEventListener('click', runLanTest);
+    $('#detectIp').addEventListener('click', () => runIpTest($('#detectIp')));
+    $('#testLan').addEventListener('click', () => runLanTest($('#testLan')));
     $('#customTestForm').addEventListener('submit', event => {
       event.preventDefault();
-      runUrlTest($('#customTestUrl').value.trim());
+      runUrlTest($('#customTestUrl').value.trim(), $('#customTestForm button[type="submit"]'));
     });
   }
 
@@ -799,6 +1548,9 @@
         activeConfigFile: '/home/silver/.config/SilverVPN/clash-configs/config.yaml',
         httpPort: 4780,
         socksPort: 4781,
+        apiPort: 4788,
+        corePort: 4790,
+        portBase: 4780,
         mode: 'Rule',
         modeLabel: '智能代理'
       },
@@ -806,6 +1558,13 @@
         systemProxy: false,
         tunEnabled: false,
         language: state.language,
+        theme: 'vision',
+        bgImage: '',
+        glassOpacity: 0.9,
+        particlesEnabled: true,
+        particlesIntensity: 0.6,
+        monitorCollapsed: false,
+        trafficCollapsed: false,
         defaultBypassHosts: ['localhost', '127.0.0.0/8', '192.168.0.0/16'],
         bypassHosts: ['gitlab.example.org'],
         currentProfileId: 'account-preview',
@@ -816,7 +1575,7 @@
         available: true,
         active: false,
         conflicts: [],
-        message: '预检通过，可以按需启用 TUN 模式。'
+        message: t('tunReadyMessage')
       },
       account: {
         auth: { username: 'preview@example.com', hasCookie: true },
@@ -851,6 +1610,20 @@
       state.dashboard.config.modeLabel = modeText(payload.mode);
       return state.dashboard;
     }
+    if (action === 'start-core') {
+      state.dashboard.core.running = true;
+      state.dashboard.core.externallyManaged = false;
+      return state.dashboard;
+    }
+    if (action === 'stop-core') {
+      state.dashboard.core.running = false;
+      state.dashboard.core.externallyManaged = false;
+      return state.dashboard;
+    }
+    if (action === 'set-system-proxy') {
+      state.dashboard.settings.systemProxy = Boolean(payload.enabled);
+      return state.dashboard;
+    }
     if (action === 'set-language') {
       state.dashboard.settings.language = payload.language;
       return state.dashboard;
@@ -864,19 +1637,55 @@
       }
       state.dashboard.settings.tunEnabled = Boolean(payload.enabled);
       state.dashboard.tun.active = Boolean(payload.enabled);
-      state.dashboard.tun.message = payload.enabled
-        ? 'TUN 正在接管需要路由的流量。'
-        : '预检通过，可以按需启用 TUN 模式。';
+      state.dashboard.tun.message = payload.enabled ? t('tunActiveMessage') : t('tunReadyMessage');
       return state.dashboard;
     }
     if (action === 'set-bypass-hosts') {
-      state.dashboard.settings.bypassHosts = String(payload.text || '').split(/\r?\n/).filter(Boolean);
+      state.dashboard.settings.bypassHosts = Array.isArray(payload.hosts)
+        ? payload.hosts
+        : String(payload.text || '').split(/\r?\n/).filter(Boolean);
+      return state.dashboard;
+    }
+    if (action === 'rename-profile') {
+      const profile = state.dashboard.subscriptions.find(item => item.id === payload.id);
+      if (profile) profile.name = payload.name;
+      if (state.dashboard.activeProfile && state.dashboard.activeProfile.id === payload.id) state.dashboard.activeProfile.name = payload.name;
+      return state.dashboard;
+    }
+    if (action === 'delete-profile') {
+      state.dashboard.subscriptions = state.dashboard.subscriptions.filter(item => item.id !== payload.id);
       return state.dashboard;
     }
     if (action === 'switch-profile') {
       state.dashboard.activeProfile = state.dashboard.subscriptions.find(item => item.id === payload.id) || state.dashboard.activeProfile;
       state.dashboard.settings.currentProfileId = payload.id;
       return state.dashboard;
+    }
+    if (action === 'set-appearance') {
+      Object.assign(state.dashboard.settings, {
+        theme: payload.theme || state.dashboard.settings.theme,
+        bgImage: typeof payload.bgImage === 'string' ? payload.bgImage : state.dashboard.settings.bgImage,
+        glassOpacity: typeof payload.glassOpacity === 'number' ? payload.glassOpacity : state.dashboard.settings.glassOpacity,
+        particlesEnabled: typeof payload.particlesEnabled === 'boolean' ? payload.particlesEnabled : state.dashboard.settings.particlesEnabled,
+        particlesIntensity: typeof payload.particlesIntensity === 'number' ? payload.particlesIntensity : state.dashboard.settings.particlesIntensity,
+        monitorCollapsed: typeof payload.monitorCollapsed === 'boolean' ? payload.monitorCollapsed : state.dashboard.settings.monitorCollapsed,
+        trafficCollapsed: typeof payload.trafficCollapsed === 'boolean' ? payload.trafficCollapsed : state.dashboard.settings.trafficCollapsed
+      });
+      applyAppearance(state.dashboard.settings);
+      return state.dashboard;
+    }
+    if (action === 'set-ports') {
+      const base = Number(payload.base);
+      state.dashboard.config.httpPort = base;
+      state.dashboard.config.socksPort = base + 1;
+      state.dashboard.config.apiPort = base + 8;
+      state.dashboard.config.corePort = base + 10;
+      state.dashboard.config.portBase = base;
+      return {
+        ok: true,
+        message: `${state.language === 'en' ? 'Ports updated' : '端口已更新'}：HTTP ${base} / SOCKS ${base + 1} / API ${base + 8} / Core ${base + 10}`,
+        dashboard: state.dashboard
+      };
     }
     if (action === 'switch-proxy') {
       state.dashboard.proxies.current = payload.proxy;
@@ -915,7 +1724,7 @@
       return {
         checkedAt: new Date().toISOString(),
         silverVPN: {
-          coreRunning: true,
+          coreRunning: Boolean(state.dashboard && state.dashboard.core && state.dashboard.core.running),
           mode: state.dashboard.config.mode,
           selector: state.dashboard.proxies.selector,
           node: state.dashboard.proxies.current,
@@ -942,14 +1751,88 @@
     if (action === 'test-tcp') {
       return { ok: true, host: payload.host, port: payload.port, elapsedMs: 18 };
     }
+    if (action === 'check-update') {
+      return { checked: true, currentVersion: '0.1.0', latestVersion: '0.2.0', available: true, dismissed: false };
+    }
+    if (action === 'monitor-stats') {
+      return {
+        up: 18000 + Math.random() * 12000,
+        down: 42000 + Math.random() * 26000,
+        connections: 3 + Math.floor(Math.random() * 5),
+        inactive: false
+      };
+    }
+    if (action === 'monitor-delay') {
+      return { delay: 120 + Math.round(Math.random() * 80), node: '香港 01' };
+    }
+    if (action === 'traffic-stats') {
+      const bytes = value => ({ up: value, down: value * 2 });
+      const range = (node) => ({ today: bytes(25 * 1024 * 1024), d3: bytes(80 * 1024 * 1024), d7: bytes(220 * 1024 * 1024), d30: bytes(640 * 1024 * 1024) });
+      return {
+        ranges: {
+          today: bytes(60 * 1024 * 1024),
+          d3: bytes(180 * 1024 * 1024),
+          d7: bytes(420 * 1024 * 1024),
+          d30: bytes(1100 * 1024 * 1024)
+        },
+        nodes: [
+          { name: '香港 01', ...range() },
+          { name: '日本 02', ...range() },
+          { name: '新加坡 03', ...range() }
+        ]
+      };
+    }
+    if (action === 'dismiss-update') {
+      return { ok: true };
+    }
+    if (action === 'install-update') {
+      return { ok: true, restartRequired: true };
+    }
     return state.dashboard;
+  }
+
+  function renderUpdate(update) {
+    const card = $('#updateCard');
+    if (!card) {
+      return;
+    }
+    state.update = update && update.available ? update : null;
+    card.hidden = !state.update || state.update.dismissed;
+    if (!state.update || state.update.dismissed) {
+      return;
+    }
+    setText('#updateTitle', state.language === 'en' ? `Version ${state.update.latestVersion} is available` : `发现新版本 ${state.update.latestVersion}`);
+    setText(
+      '#updateDescription',
+      state.language === 'en'
+        ? `Current ${state.update.currentVersion} · Download and install from the official repository.`
+        : `当前版本 ${state.update.currentVersion} · 将从官方仓库下载并安装更新。`
+    );
+  }
+
+  async function loadUpdate(quiet) {
+    try {
+      const update = await panda.invoke('check-update', {});
+      renderUpdate(update);
+      if (!quiet && (!update.available || update.dismissed)) {
+        toast(state.language === 'en' ? 'You are up to date' : '已是最新版本');
+      }
+    } catch (error) {
+      if (!quiet) {
+        toast(error.message || String(error));
+      }
+    }
   }
 
   document.addEventListener('DOMContentLoaded', () => {
     bindEvents();
     loadDashboard(true);
     loadNetworkStatus(false);
+    loadUpdate(true);
+    loadTrafficStats();
+    startMonitor();
     setInterval(() => loadDashboard(true), 10000);
+    setInterval(() => loadTrafficStats(), 30000);
     setInterval(() => loadNetworkStatus(false), 15000);
   });
 })();
