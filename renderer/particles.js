@@ -21,13 +21,13 @@
   function params() {
     const k = cfg.intensity;
     return {
-      count: Math.round(14 + 58 * k),
-      radius: 1.6 + 0.7 * k,
+      count: Math.round(10 + 46 * k),
+      radius: 1.1 + 0.5 * k,
       speed: 0.22 + 0.24 * k,
       pushRadius: 90 + 60 * k,
       pushForce: 0.7 + 0.3 * k,
       linkDist: 85 + 55 * k,
-      linkAlpha: 0.4 + 0.3 * k
+      linkAlpha: 0.3 + 0.22 * k
     };
   }
 
@@ -87,7 +87,7 @@
     const r = Math.round(first[0] * 0.72 + second[0] * 0.28);
     const g = Math.round(first[1] * 0.72 + second[1] * 0.28);
     const b = Math.round(first[2] * 0.72 + second[2] * 0.28);
-    return { r, g, b, a: light ? 0.42 : 0.66 };
+    return { r, g, b, a: light ? 0.3 : 0.44 };
   }
 
   function draw() {

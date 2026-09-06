@@ -573,26 +573,32 @@
     }
     const dashboard = state.dashboard || {};
     const rows = getRows();
+    let html;
     if (!rows.length) {
-      list.innerHTML = `<div class="node-empty">${t('noRows')}</div>`;
+      html = `<div class="node-empty">${t('noRows')}</div>`;
+    } else {
+      html = rows
+        .map(row => {
+          const delay = state.delays.get(row.name);
+          const delayClass = delay == null ? '' : delay >= 0 && delay < 800 ? 'good' : 'bad';
+          const delayText = delay == null ? '-' : delay >= 0 ? `${delay} ms` : '失败';
+          const selected = row.name === dashboard.proxies.current || row.selected;
+          return `
+            <div class="node-row${selected ? ' selected' : ''}" data-node="${escapeHtml(row.name)}">
+              <div class="node-name" title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</div>
+              <div class="node-type">${escapeHtml(row.type || '-')}</div>
+              <div class="node-delay ${delayClass}">${delayText}</div>
+              <button class="button button-small switch-node" type="button" data-node="${escapeHtml(row.name)}">${selected ? t('selected') : t('switchNode')}</button>
+            </div>
+          `;
+        })
+        .join('');
+    }
+    // 差量更新：内容未变化时不重写 DOM，避免点击按钮后整屏“重置”
+    if (list.innerHTML === html) {
       return;
     }
-    list.innerHTML = rows
-      .map(row => {
-        const delay = state.delays.get(row.name);
-        const delayClass = delay == null ? '' : delay >= 0 && delay < 800 ? 'good' : 'bad';
-        const delayText = delay == null ? '-' : delay >= 0 ? `${delay} ms` : '失败';
-        const selected = row.name === dashboard.proxies.current || row.selected;
-        return `
-          <div class="node-row${selected ? ' selected' : ''}" data-node="${escapeHtml(row.name)}">
-            <div class="node-name" title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</div>
-            <div class="node-type">${escapeHtml(row.type || '-')}</div>
-            <div class="node-delay ${delayClass}">${delayText}</div>
-            <button class="button button-small switch-node" type="button" data-node="${escapeHtml(row.name)}">${selected ? t('selected') : t('switchNode')}</button>
-          </div>
-        `;
-      })
-      .join('');
+    list.innerHTML = html;
   }
 
   function escapeHtml(value) {
@@ -818,16 +824,22 @@
       ? dashboard.activeProfile.id
       : (dashboard.settings && dashboard.settings.currentProfileId) || '';
     state.profileId = currentId;
+    let html;
     if (!profiles.length) {
-      tabs.innerHTML = `<span class="profile-empty">${t('profileEmpty')}</span>`;
+      html = `<span class="profile-empty">${t('profileEmpty')}</span>`;
+    } else {
+      html = profiles
+        .map(profile => {
+          const active = profile.id === currentId;
+          return `<button class="profile-tab${active ? ' active' : ''}" data-id="${escapeHtml(profile.id)}" type="button" title="${escapeHtml(profile.name || '')}">${escapeHtml(profile.name || profile.kind || profile.id)}</button>`;
+        })
+        .join('');
+    }
+    // 差量更新：内容未变化时不重写 DOM
+    if (tabs.innerHTML === html) {
       return;
     }
-    tabs.innerHTML = profiles
-      .map(profile => {
-        const active = profile.id === currentId;
-        return `<button class="profile-tab${active ? ' active' : ''}" data-id="${escapeHtml(profile.id)}" type="button" title="${escapeHtml(profile.name || '')}">${escapeHtml(profile.name || profile.kind || profile.id)}</button>`;
-      })
-      .join('');
+    tabs.innerHTML = html;
   }
 
   function formatBytes(value) {
@@ -916,6 +928,11 @@
     const toggle = $('#toggleMonitor');
     if (body) body.hidden = collapsed;
     if (toggle) toggle.textContent = collapsed ? '▸' : '▾';
+    // 幂等：状态未变化时不重启定时器（renderDashboard 每次都会调用）
+    if (state.monitorCollapsed === collapsed) {
+      return;
+    }
+    state.monitorCollapsed = collapsed;
     if (collapsed) {
       stopMonitor();
     } else {
@@ -1048,8 +1065,26 @@
     }
   }
 
+  // 轻量操作：不触发全屏 loading 遮罩，避免点击后整个界面“闪一下”
+  const LIGHT_ACTIONS = new Set([
+    'set-appearance',
+    'set-language',
+    'set-mode',
+    'switch-proxy',
+    'switch-profile',
+    'rename-profile',
+    'delete-profile',
+    'set-bypass-hosts',
+    'set-ports',
+    'check-delays',
+    'dismiss-update'
+  ]);
+
   async function callAction(action, payload, successMessage) {
-    setLoading(true);
+    const light = LIGHT_ACTIONS.has(action);
+    if (!light) {
+      setLoading(true);
+    }
     try {
       const result = await panda.invoke(action, payload || {});
       if (result && result.dashboard) {
@@ -1067,7 +1102,9 @@
       toast(error.message || String(error));
       throw error;
     } finally {
-      setLoading(false);
+      if (!light) {
+        setLoading(false);
+      }
     }
   }
 
