@@ -54,6 +54,7 @@
       if (next === 'on') {
         core.mode = 'releasing';
         core.emitCarry = 0;
+        core.releaseStartedAt = performance.now();
       } else {
         core.mode = 'absorbing';
         core.absorbStartedAt = performance.now();
@@ -98,12 +99,13 @@
   // 从核心向外“吐”一个粒子（释放动画）
   function emitParticle(speed) {
     const angle = Math.random() * Math.PI * 2;
-    const radius = HUD_CATCH_RADIUS + 8 + Math.random() * 14;
+    const radius = HUD_CATCH_RADIUS + 6 + Math.random() * 10;
+    const velocity = speed * (3.4 + Math.random() * 1.2);
     const particle = {
       x: hud.x + Math.cos(angle) * radius,
       y: hud.y + Math.sin(angle) * radius,
-      vx: Math.cos(angle) * speed * 2.6,
-      vy: Math.sin(angle) * speed * 2.6
+      vx: Math.cos(angle) * velocity,
+      vy: Math.sin(angle) * velocity
     };
     particles.push(particle);
   }
@@ -242,17 +244,20 @@
       }
     }
 
-    // 释放进度：从核心理出粒子（平滑、有惯性），达标后进入运行模式
+    // 释放进度：从核心理出粒子（持续约 5 秒的喷射动作），达标且时间足够后进入运行模式
     if (core.mode === 'releasing' && hud.active) {
       const target = p.count;
-      if (particles.length < target) {
-        core.emitCarry += 0.25 + 0.1 * p.speed;
+      const releaseElapsed = performance.now() - (core.releaseStartedAt || 0);
+      // 前 5 秒持续喷射；已经吐够数量且过了喷射期才切换回吸积模式
+      if (particles.length < target && releaseElapsed < 5200) {
+        core.emitCarry += 0.45 + 0.15 * p.speed;
         while (core.emitCarry >= 1 && particles.length < target) {
           core.emitCarry -= 1;
           emitParticle(p.speed);
         }
-      } else {
+      } else if (releaseElapsed > 5200) {
         core.mode = 'on';
+        core.emitCarry = 0;
       }
     }
 
@@ -298,13 +303,13 @@
           // 开启：粒子从核心吐出（绿色），向外吹远，不被吸回
           const hdist = Math.hypot(hdx, hdy);
           if (hdist > 1) {
-            // 越靠近核心越强向外吹，让粒子快速飞离
-            const blow = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 1.4));
-            particle.vx += normX * blow * 0.5;
-            particle.vy += normY * blow * 0.5;
+            // 越靠近核心越强向外吹（背离核心方向），让粒子快速喷离，形成爆发感
+            const blow = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 1.6));
+            particle.vx -= normX * blow * 0.85;
+            particle.vy -= normY * blow * 0.85;
           }
-          particle.vx *= 0.976;
-          particle.vy *= 0.976;
+          particle.vx *= 0.972;
+          particle.vy *= 0.972;
         } else if (core.mode === 'on') {
           // 运行：慢速吸积 + 星环（粒子绕核心旋转，不急着被吸）
           if (hdist < HUD_CATCH_RADIUS + p.radius) {
