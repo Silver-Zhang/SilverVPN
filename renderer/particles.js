@@ -98,35 +98,25 @@
     }
   }
 
-  // 从核心向外“吐”一个粒子：统一绕核心公转方向甩出（无自转）
-  // 按目标轨道分层：近/中粒子受轨道束缚绕行（形成星环），远的自由飞散
+  // 从核心向外“吐”一个粒子：统一直径向甩出，力量随机分布（真实物理）
+  // 力量：宽分布（0.1~1.6 均匀 + 20% 强烈喷射 2~3.2），形成明显的远近层次
   function emitParticle(speed) {
     const angle = Math.random() * Math.PI * 2;
-    const radius = HUD_CATCH_RADIUS + 6 + Math.random() * 10;
+    const radius = HUD_CATCH_RADIUS + 4 + Math.random() * 8;
     const roll = Math.random();
-    let targetR;
-    let factor;
-    if (roll < 0.45) {
-      targetR = 55 + Math.random() * 95; // 近环：留在核心附近绕行
-      factor = 0.22 + Math.random() * 0.2;
-    } else if (roll < 0.8) {
-      targetR = 180 + Math.random() * 170; // 中环
-      factor = 0.6 + Math.random() * 0.4;
-    } else {
-      targetR = null; // 远散：无轨道束缚
-      factor = 1.3 + Math.random() * 0.9;
-    }
-    const radial = speed * factor;
-    const tangential = radial * 0.9;
+    const power = roll < 0.2
+      ? 2 + Math.random() * 1.2          // 少量：强力喷射，飞得很远
+      : 0.1 + Math.random() * 1.5;       // 多数：宽范围，近/中/远自然分布
+    const radial = speed * 3.0 * power;
+    const tangential = radial * (0.55 + Math.random() * 0.35);
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
-    // 径向（向外）+ 切向（统一公转方向）：粒子被“甩”出核心，沿圆周切线飞出
+    // 径向（向外）+ 切向（统一公转方向）
     const particle = {
       x: hud.x + cos * radius,
       y: hud.y + sin * radius,
       vx: cos * radial - sin * tangential,
-      vy: sin * radial + cos * tangential,
-      targetR
+      vy: sin * radial + cos * tangential
     };
     particles.push(particle);
   }
@@ -324,37 +314,10 @@
             core.mode = 'off';
           }
         } else if (core.mode === 'releasing') {
-          // 开启：粒子被统一公转方向“甩”出核心（无自转），带惯性
-          const hdist = Math.hypot(hdx, hdy);
-          if (hdist > 1) {
-            if (particle.targetR != null) {
-              // 轨道粒子：弹簧束缚（正 delta=太远→向心拉；负=太近→向外推）
-              const delta = hdist - particle.targetR;
-              particle.vx += normX * delta * 0.11;
-              particle.vy += normY * delta * 0.11;
-              // 保持公转：切向速度锁定量
-              const targetSwirl = 0.9;
-              const tangentX = -normY;
-              const tangentY = normX;
-              const currentTangential = particle.vx * tangentX + particle.vy * tangentY;
-              const adjust = (targetSwirl - currentTangential) * 0.35;
-              particle.vx += tangentX * adjust;
-              particle.vy += tangentY * adjust;
-              particle.vx *= 0.988;
-              particle.vy *= 0.988;
-            } else {
-              // 远散粒子：向外吹 + 涡流
-              const blow = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 1.6));
-              particle.vx -= normX * blow * 0.8;
-              particle.vy -= normY * blow * 0.8;
-              const spinFalloff = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 2.2));
-              const spinForce = blow * 0.9 + spinFalloff * 0.18;
-              particle.vx += -normY * spinForce;
-              particle.vy += normX * spinForce;
-            }
-          }
-          particle.vx *= 0.976;
-          particle.vy *= 0.976;
+          // 开启：粒子被统一直径向甩出（无自转），力量大小决定远近
+          // 真实物理：吐出后无持续外力，初速+阻尼自然衰减，远近完全由力量决定
+          particle.vx *= 0.992;
+          particle.vy *= 0.992;
         } else if (core.mode === 'on') {
           // 引力递进：开启后 3s 无引力 → 9s 引力从 0 线性递增到全量
           const now = performance.now();
@@ -367,17 +330,6 @@
           } else if (hdist < HUD_CATCH_RADIUS + p.radius) {
             respawnParticle(particle);
             continue;
-          } else if (particle.targetR != null && hdist > RING_INNER - 20) {
-            // 带轨道印记的粒子：渐变到目标半径绕行（稳定的星环成员）
-            const delta = hdist - particle.targetR;
-            const pull = delta * 0.02 * ramp;
-            const swirl = 1.0 * ramp;
-            particle.vx += normX * pull;
-            particle.vy += normY * pull;
-            particle.vx += -normY * swirl;
-            particle.vy += normX * swirl;
-            particle.vx *= 0.998;
-            particle.vy *= 0.998;
           } else if (hdist < p.gravityRadius) {
             const inRing = hdist > RING_INNER && hdist < RING_OUTER;
             const falloff = 1 - hdist / p.gravityRadius;
@@ -402,8 +354,9 @@
         }
       }
 
-      particle.vx *= 0.984;
-      particle.vy *= 0.984;
+      const damping = core.mode === 'releasing' ? 0.995 : 0.984;
+      particle.vx *= damping;
+      particle.vy *= damping;
       const speed = Math.hypot(particle.vx, particle.vy);
       const maxSpeed = core.mode === 'absorbing' ? 4 : core.mode === 'releasing' ? 5 : 2.4;
       if (speed > maxSpeed) {
