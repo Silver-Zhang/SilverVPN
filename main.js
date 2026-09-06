@@ -108,6 +108,7 @@ let settings = {
   glassOpacity: 0.9,
   particlesEnabled: true,
   particlesIntensity: 0.6,
+  particlesSpeed: 1,
   monitorCollapsed: false,
   trafficCollapsed: false,
   lastUpdateCheckAt: '',
@@ -2419,6 +2420,7 @@ async function buildDashboard() {
       glassOpacity: typeof settings.glassOpacity === 'number' ? settings.glassOpacity : 0.9,
       particlesEnabled: settings.particlesEnabled !== false,
       particlesIntensity: typeof settings.particlesIntensity === 'number' ? settings.particlesIntensity : 0.6,
+      particlesSpeed: typeof settings.particlesSpeed === 'number' ? settings.particlesSpeed : 1,
       monitorCollapsed: Boolean(settings.monitorCollapsed),
       trafficCollapsed: Boolean(settings.trafficCollapsed),
       defaultBypassHosts: DEFAULT_BYPASS_HOSTS,
@@ -2517,6 +2519,9 @@ function setAppearanceFromGui(payload = {}) {
   }
   if (typeof payload.particlesIntensity === 'number') {
     settings.particlesIntensity = Math.min(1, Math.max(0.1, payload.particlesIntensity));
+  }
+  if (typeof payload.particlesSpeed === 'number') {
+    settings.particlesSpeed = Math.min(2, Math.max(0.2, payload.particlesSpeed));
   }
   if (typeof payload.monitorCollapsed === 'boolean') {
     settings.monitorCollapsed = payload.monitorCollapsed;
