@@ -96,22 +96,20 @@
     }
   }
 
-  // 从核心向外“吐”一个粒子（释放动画：旋转螺旋喷出）
+  // 从核心向外“吐”一个粒子：统一绕核心公转方向甩出（不粒子自转）
   function emitParticle(speed) {
     const angle = Math.random() * Math.PI * 2;
     const radius = HUD_CATCH_RADIUS + 6 + Math.random() * 10;
     const radial = speed * (3.0 + Math.random() * 1.0);
     const tangential = radial * 0.85;
-    const spin = Math.random() < 0.5 ? -1 : 1;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
-    // 径向 + 切向合成初速：螺旋向外，且保留旋转方向（惯性）
+    // 径向（向外）+ 切向（统一公转方向）：粒子被“甩”出核心，沿圆周切线飞出
     const particle = {
       x: hud.x + cos * radius,
       y: hud.y + sin * radius,
-      vx: cos * radial - sin * tangential * spin,
-      vy: sin * radial + cos * tangential * spin,
-      spin
+      vx: cos * radial - sin * tangential,
+      vy: sin * radial + cos * tangential
     };
     particles.push(particle);
   }
@@ -306,20 +304,18 @@
             core.mode = 'off';
           }
         } else if (core.mode === 'releasing') {
-          // 开启：粒子从核心螺旋喷出（旋转 + 向外），有惯性
+          // 开启：粒子被统一公转方向“甩”出核心（无自转），带惯性
           const hdist = Math.hypot(hdx, hdy);
           if (hdist > 1) {
             // 向外吹（背离核心）：近核强、远核弱
             const blow = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 1.6));
             particle.vx -= normX * blow * 0.8;
             particle.vy -= normY * blow * 0.8;
-            // 切向涡流：沿各自旋转方向持续加速，形成螺旋
+            // 统一切向涡流（公转方向）：粒子被带离，形成漩涡甩出感
             const spinFalloff = Math.max(0, 1 - hdist / (HUD_GLOW_RADIUS * 2.2));
             const spinForce = blow * 0.9 + spinFalloff * 0.18;
-            const s = particle.spin || (Math.random() < 0.5 ? -1 : 1);
-            particle.spin = s;
-            particle.vx += -normY * spinForce * s;
-            particle.vy += normX * spinForce * s;
+            particle.vx += -normY * spinForce;
+            particle.vy += normX * spinForce;
           }
           particle.vx *= 0.976;
           particle.vy *= 0.976;
