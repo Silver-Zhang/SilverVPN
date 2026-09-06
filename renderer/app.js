@@ -102,6 +102,7 @@
       kpiNodesFoot: '当前配置可用节点',
       kpiHttpLabel: 'HTTP 代理',
       kpiSocksLabel: 'SOCKS 代理',
+      kpiProxyLabel: '代理端口',
       kpiPortFoot: '127.0.0.1 端口',
       monitorTitle: '实时监控',
       collapseTitle: '折叠/展开',
@@ -172,7 +173,9 @@
       particlesToggleText: '动态粒子 / 星轨连线',
       particlesOffHint: '关闭后不消耗渲染性能。',
       particlesIntensityLabel: '特效强度',
-      particlesIntensityHint: '控制粒子数量、速度与星轨连线密度。',
+      particlesIntensityHint: '控制粒子数量与星轨连线密度。',
+      particlesSpeedLabel: '粒子速度',
+      particlesSpeedHint: '粒子飞行与鼠标排斥的响应速度。',
       pathsDataDir: '数据目录',
       pathsConfigFile: '配置文件',
       pathsControlApi: '控制 API'
@@ -245,6 +248,7 @@
       kpiNodesFoot: 'Available nodes',
       kpiHttpLabel: 'HTTP proxy',
       kpiSocksLabel: 'SOCKS proxy',
+      kpiProxyLabel: 'Proxy ports',
       kpiPortFoot: '127.0.0.1 port',
       monitorTitle: 'Live monitor',
       collapseTitle: 'Collapse / expand',
@@ -315,7 +319,9 @@
       particlesToggleText: 'Particles & constellation',
       particlesOffHint: 'Disable to save rendering performance.',
       particlesIntensityLabel: 'Intensity',
-      particlesIntensityHint: 'Controls particle count, speed, and link density.',
+      particlesIntensityHint: 'Controls particle count and link density.',
+      particlesSpeedLabel: 'Speed',
+      particlesSpeedHint: 'Response speed of particle flight and mouse repulsion.',
       pathsDataDir: 'Data directory',
       pathsConfigFile: 'Config file',
       pathsControlApi: 'Control API'
@@ -625,6 +631,7 @@
     }
     const particlesEnabled = settings.particlesEnabled !== false;
     const particlesIntensity = typeof settings.particlesIntensity === 'number' ? settings.particlesIntensity : 0.6;
+    const particlesSpeed = typeof settings.particlesSpeed === 'number' ? settings.particlesSpeed : 1;
     const toggle = $('#particlesEnabled');
     if (toggle && document.activeElement !== toggle) {
       toggle.checked = particlesEnabled;
@@ -637,8 +644,16 @@
     if (particlesValue) {
       particlesValue.textContent = `${Math.round(particlesIntensity * 100)}%`;
     }
+    const speedInput = $('#particlesSpeed');
+    if (speedInput && document.activeElement !== speedInput) {
+      speedInput.value = String(Math.round(particlesSpeed * 100));
+    }
+    const speedValue = $('#particlesSpeedValue');
+    if (speedValue) {
+      speedValue.textContent = `${particlesSpeed.toFixed(1)}×`;
+    }
     if (window.silverVpnParticles) {
-      window.silverVpnParticles.apply({ enabled: particlesEnabled, intensity: particlesIntensity });
+      window.silverVpnParticles.apply({ enabled: particlesEnabled, intensity: particlesIntensity, speed: particlesSpeed });
     }
     $$('.theme-chip').forEach(chip => {
       chip.classList.toggle('active', chip.dataset.theme === theme);
@@ -1540,6 +1555,19 @@
     $('#particlesIntensity').addEventListener('change', event => {
       callAction('set-appearance', { particlesIntensity: Number(event.target.value) / 100 }, t('appearanceSaved'));
     });
+    $('#particlesSpeed').addEventListener('input', event => {
+      const value = Number(event.target.value) / 100;
+      if (window.silverVpnParticles) {
+        window.silverVpnParticles.apply({ speed: value });
+      }
+      const label = $('#particlesSpeedValue');
+      if (label) {
+        label.textContent = `${(value).toFixed(1)}×`;
+      }
+    });
+    $('#particlesSpeed').addEventListener('change', event => {
+      callAction('set-appearance', { particlesSpeed: Number(event.target.value) / 100 }, t('appearanceSaved'));
+    });
 
     $('#loginForm').addEventListener('submit', event => {
       event.preventDefault();
@@ -1600,6 +1628,7 @@
         glassOpacity: 0.9,
         particlesEnabled: true,
         particlesIntensity: 0.6,
+        particlesSpeed: 1,
         monitorCollapsed: false,
         trafficCollapsed: false,
         defaultBypassHosts: ['localhost', '127.0.0.0/8', '192.168.0.0/16'],
@@ -1705,6 +1734,7 @@
         glassOpacity: typeof payload.glassOpacity === 'number' ? payload.glassOpacity : state.dashboard.settings.glassOpacity,
         particlesEnabled: typeof payload.particlesEnabled === 'boolean' ? payload.particlesEnabled : state.dashboard.settings.particlesEnabled,
         particlesIntensity: typeof payload.particlesIntensity === 'number' ? payload.particlesIntensity : state.dashboard.settings.particlesIntensity,
+        particlesSpeed: typeof payload.particlesSpeed === 'number' ? payload.particlesSpeed : state.dashboard.settings.particlesSpeed,
         monitorCollapsed: typeof payload.monitorCollapsed === 'boolean' ? payload.monitorCollapsed : state.dashboard.settings.monitorCollapsed,
         trafficCollapsed: typeof payload.trafficCollapsed === 'boolean' ? payload.trafficCollapsed : state.dashboard.settings.trafficCollapsed
       });

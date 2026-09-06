@@ -50,13 +50,13 @@
       </section>
 
       <section class="kpi-row">
-        <div class="kpi-card">
+        <div class="kpi-card kpi-node">
           <span class="kpi-icon" aria-hidden="true">⊕</span>
           <span class="kpi-label" data-i18n="kpiNodesLabel">节点</span>
           <span id="proxyCount" class="kpi-value">0</span>
           <span class="kpi-foot" data-i18n="kpiNodesFoot">当前配置可用节点</span>
         </div>
-        <div id="kpiCoreCard" class="kpi-card">
+        <div id="kpiCoreCard" class="kpi-card kpi-core">
           <span class="kpi-icon" aria-hidden="true">◉</span>
           <span class="kpi-hud" aria-hidden="true">
             <span class="hud-wave"></span>
@@ -68,16 +68,19 @@
           <span id="kpiCore" class="kpi-value dim">读取中</span>
           <span class="kpi-foot" data-i18n="kpiCoreFoot">mihomo 运行状态</span>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card kpi-proxy">
           <span class="kpi-icon" aria-hidden="true">⇄</span>
-          <span class="kpi-label" data-i18n="kpiHttpLabel">HTTP 代理</span>
-          <span id="httpPort" class="kpi-value dim">-</span>
-          <span class="kpi-foot" data-i18n="kpiPortFoot">127.0.0.1 端口</span>
-        </div>
-        <div class="kpi-card">
-          <span class="kpi-icon" aria-hidden="true">⤳</span>
-          <span class="kpi-label" data-i18n="kpiSocksLabel">SOCKS 代理</span>
-          <span id="socksPort" class="kpi-value dim">-</span>
+          <span class="kpi-label" data-i18n="kpiProxyLabel">代理端口</span>
+          <div class="proxy-ports">
+            <div class="proxy-port">
+              <span class="proxy-name">HTTP</span>
+              <span id="httpPort" class="kpi-value dim">-</span>
+            </div>
+            <div class="proxy-port">
+              <span class="proxy-name">SOCKS</span>
+              <span id="socksPort" class="kpi-value dim">-</span>
+            </div>
+          </div>
           <span class="kpi-foot" data-i18n="kpiPortFoot">127.0.0.1 端口</span>
         </div>
       </section>
