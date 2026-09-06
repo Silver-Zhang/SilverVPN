@@ -16,6 +16,9 @@ SilverVPN 是一款面向 Linux 的开源 VPN 与代理客户端，基于 mihomo
 - **proxy-only 模式**：通过 HTTP/SOCKS 代理工作，不修改系统路由和 DNS。
 - **可选 TUN 模式**：为不支持 HTTP/SOCKS 代理的程序提供系统级流量接管能力。
 - **多人服务器支持**：每个用户独立配置、独立端口、独立后台进程、独立终端代理状态、独立 VS Code Remote 设置。
+- **自定义端口组**：GUI 网络状态面板与 CLI（`svpn config ports`）共享同一份端口配置，一处修改两端同步。
+- **现代化界面**：7 套颜色主题、自定义背景图、玻璃透明度、可调强度的动态粒子/星轨背景，面板悬浮光效随主题变色。
+- **实时监控与流量统计**：实时流量/延迟/连接曲线（支持折叠），按节点统计今天/3/7/30 天流量并自动清理过期流水。
 - **开发工具友好**：适合终端工具、CLI Agent、Copilot/Codex 类工具和远程 IDE 场景。
 
 ## 文档
@@ -88,6 +91,16 @@ svpn mode smart
 svpn test
 ```
 
+管理绕过直连（不代理）的地址：
+
+```bash
+svpn bypass list              # 查看内置默认 + 自定义绕过地址
+svpn bypass add example.com   # 添加绕过地址（后端运行中即时生效）
+svpn bypass remove example.com
+```
+
+> 提示：桌面 GUI 与 CLI 共享同一份配置与代理核心。GUI 开启代理时，`svpn status` 会显示"运行中（桌面 GUI 核心）"；若 CLI 端口组与 GUI 不一致，`svpn on` 会提示对齐端口后复用现有核心，避免双核心冲突。
+
 关闭当前用户自己的后台和代理集成：
 
 ```bash
@@ -111,6 +124,8 @@ base + 8   svpn service/API
 base + 10  mihomo controller
 ```
 
+桌面 GUI 也可在网络状态面板中直接修改端口组（应用后自动重启核心）。GUI 与 CLI 读写同一份 `server.json`，因此无论从哪端修改，另一端都会立即使用相同端口并复用同一代理核心。
+
 详见 [Multi-user Server Guide](docs/multi-user-server.md) 或 [多人服务器部署指南](docs/multi-user-server.zh-CN.md)。
 
 ## 验证
@@ -118,6 +133,7 @@ base + 10  mihomo controller
 ```bash
 npm run check
 npm run verify
+npm run verify:svpn
 node cli.js doctor
 node cli.js status
 ```

@@ -16,6 +16,9 @@ The project focuses on practical Linux usage: subscription import, profile manag
 - **Proxy-only mode**: HTTP/SOCKS proxy integration without changing system routes or DNS.
 - **Optional TUN mode**: system-level routing for applications that do not support HTTP/SOCKS proxy settings.
 - **Multi-user server support**: per-user data directories, per-user ports, per-user daemon, per-user terminal state, and per-user VS Code Remote settings.
+- **Custom port group**: the GUI network panel and the CLI (`svpn config ports`) share one port configuration, so a change on either side applies to both.
+- **Modern themed UI**: 7 color themes, custom background image, glass opacity, adjustable particle/constellation background, and theme-colored hover glow.
+- **Live monitor & traffic stats**: real-time traffic/delay/connection charts (collapsible), per-node traffic over today/3/7/30 days with automatic ledger cleanup.
 - **Developer-tool friendly**: works with terminal tools and remote IDE workflows through explicit proxy variables and VS Code Remote configuration.
 
 ## Documentation
@@ -88,6 +91,16 @@ svpn mode smart
 svpn test
 ```
 
+Manage bypassed (direct) hosts:
+
+```bash
+svpn bypass list              # Show built-in defaults plus your custom bypass hosts
+svpn bypass add example.com   # Add a bypass host (hot-reloaded when the core is running)
+svpn bypass remove example.com
+```
+
+> The desktop GUI and the CLI share the same settings file and proxy core. With the GUI running, `svpn status` reports "running (desktop GUI core)"; if the CLI port group differs, `svpn on` guides you to align ports and reuse the existing core instead of starting a conflicting one.
+
 Stop the current user's backend and proxy integrations:
 
 ```bash
@@ -111,6 +124,8 @@ base + 8   svpn service/API
 base + 10  mihomo controller
 ```
 
+The desktop GUI can also change the port group from the network panel (applies with an automatic core restart). GUI and CLI read and write the same `server.json`, so whichever side changes it, the other immediately uses the same ports and reuses the same core.
+
 See [Multi-user Server Guide](docs/multi-user-server.md) or [多人服务器部署指南](docs/multi-user-server.zh-CN.md).
 
 ## Validation
@@ -118,6 +133,7 @@ See [Multi-user Server Guide](docs/multi-user-server.md) or [多人服务器部�
 ```bash
 npm run check
 npm run verify
+npm run verify:svpn
 node cli.js doctor
 node cli.js status
 ```
