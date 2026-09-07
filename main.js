@@ -110,7 +110,14 @@ let settings = {
   glassEnabled: true,
   particlesEnabled: true,
   particlesIntensity: 0.6,
-  particlesSpeed: 1,
+  particlesEmitters: [],
+  gravitySources: [],
+  ringRadius: 110,
+  gravity: 1,
+  coreDir: 'ccw',
+  bounce: false,
+  mouseRepel: false,
+  gravityCore: { x: 0.5, y: 0.5 },
   monitorCollapsed: false,
   trafficCollapsed: false,
   lastUpdateCheckAt: '',
@@ -2442,7 +2449,16 @@ async function buildDashboard() {
       glassEnabled: settings.glassEnabled !== false,
       particlesEnabled: settings.particlesEnabled !== false,
       particlesIntensity: typeof settings.particlesIntensity === 'number' ? settings.particlesIntensity : 0.6,
-      particlesSpeed: typeof settings.particlesSpeed === 'number' ? settings.particlesSpeed : 1,
+      particlesEmitters: Array.isArray(settings.particlesEmitters) ? settings.particlesEmitters : [],
+      gravitySources: Array.isArray(settings.gravitySources) ? settings.gravitySources : [],
+      ringRadius: typeof settings.ringRadius === 'number' ? settings.ringRadius : 110,
+      gravity: typeof settings.gravity === 'number' ? settings.gravity : 1,
+      coreDir: settings.coreDir === 'cw' || settings.coreDir === 'random' ? settings.coreDir : 'ccw',
+      bounce: settings.bounce === true,
+      mouseRepel: settings.mouseRepel === true,
+      gravityCore: settings.gravityCore && typeof settings.gravityCore.x === 'number'
+        ? { x: settings.gravityCore.x, y: settings.gravityCore.y }
+        : { x: 0.5, y: 0.5 },
       monitorCollapsed: Boolean(settings.monitorCollapsed),
       trafficCollapsed: Boolean(settings.trafficCollapsed),
       defaultBypassHosts: DEFAULT_BYPASS_HOSTS,
@@ -2548,8 +2564,50 @@ function setAppearanceFromGui(payload = {}) {
   if (typeof payload.particlesIntensity === 'number') {
     settings.particlesIntensity = Math.min(1, Math.max(0.1, payload.particlesIntensity));
   }
-  if (typeof payload.particlesSpeed === 'number') {
-    settings.particlesSpeed = Math.min(2, Math.max(0.2, payload.particlesSpeed));
+  if (typeof payload.ringRadius === 'number') {
+    settings.ringRadius = Math.min(250, Math.max(0, payload.ringRadius));
+  }
+  if (typeof payload.gravity === 'number') {
+    settings.gravity = Math.min(10, Math.max(0, payload.gravity));
+  }
+  if (typeof payload.coreDir === 'string') {
+    settings.coreDir = payload.coreDir === 'cw' || payload.coreDir === 'random' ? payload.coreDir : 'ccw';
+  }
+  if (typeof payload.bounce === 'boolean') {
+    settings.bounce = payload.bounce;
+  }
+  if (typeof payload.mouseRepel === 'boolean') {
+    settings.mouseRepel = payload.mouseRepel;
+  }
+  if (payload.gravityCore && typeof payload.gravityCore.x === 'number' && typeof payload.gravityCore.y === 'number') {
+    settings.gravityCore = {
+      x: Math.min(1, Math.max(0, payload.gravityCore.x)),
+      y: Math.min(1, Math.max(0, payload.gravityCore.y))
+    };
+  }
+  if (Array.isArray(payload.gravitySources)) {
+    // 只保留合法的引力源记录（含 id + 归一化相对坐标 + 星环半径 + 引力大小），防御异常值
+    settings.gravitySources = payload.gravitySources
+      .map(item => ({
+        id: String(item && item.id || '').slice(0, 64),
+        x: Math.min(1, Math.max(0, Number(item && item.x) || 0.5)),
+        y: Math.min(1, Math.max(0, Number(item && item.y) || 0.5)),
+        ringRadius: Math.min(250, Math.max(0, Number.isFinite(Number(item && item.ringRadius)) ? Number(item.ringRadius) : 110)),
+        gravity: Math.min(10, Math.max(0, Number.isFinite(Number(item && item.gravity)) ? Number(item.gravity) : 1)),
+        dir: item && (item.dir === 'cw' || item.dir === 'ccw') ? item.dir : 'random'
+      }))
+      .slice(0, 60);
+  }
+  if (Array.isArray(payload.particlesEmitters)) {
+    // 只保留合法的发射源记录（含 id + 归一化相对坐标 + 喷射开关），防御异常值
+    settings.particlesEmitters = payload.particlesEmitters
+      .map(item => ({
+        id: String(item && item.id || '').slice(0, 64),
+        x: Math.min(1, Math.max(0, Number(item && item.x) || 0.5)),
+        y: Math.min(1, Math.max(0, Number(item && item.y) || 0.5)),
+        emitting: item && item.emitting !== false
+      }))
+      .slice(0, 60);
   }
   if (typeof payload.monitorCollapsed === 'boolean') {
     settings.monitorCollapsed = payload.monitorCollapsed;
@@ -2950,6 +3008,18 @@ async function runNetworkDiagnostics() {
     items.push({ level: 'info', key: 'diagPathSkipped' });
   }
 
+  // VS Code 扩展宿主残留代理：这几类进程必须完整重启 VS Code 才能清除
+  const vscodeResidual = detectVscodeProxyResidual();
+  if (vscodeResidual.found.length) {
+    items.push({
+      level: 'error',
+      key: 'diagVscodeProxyResidual',
+      params: { port: HTTP_PROXY_PORT, procs: String(vscodeResidual.found.length) }
+    });
+  } else {
+    items.push({ level: 'ok', key: 'diagVscodeProxyOk' });
+  }
+
   const direct = await probeDirectUrl();
   items.push(direct.ok
     ? { level: 'ok', key: 'diagDirectOk', params: { code: direct.code } }
@@ -2963,13 +3033,16 @@ async function runNetworkDiagnostics() {
     items,
     residual: proxyStatus.mode === 'manual' && proxyStatus.ownedBySilverVPN && !httpListening,
     coreRunning,
+    vscodeProxyResidual: vscodeResidual.found.length,
     checkedAt: new Date().toISOString()
   };
 }
 
 // 一键修复：清理指向本机端口但核心未运行的系统代理残留
+// 注意：VS Code 扩展宿主进程的孤儿代理变量无法从主进程清除，需引导用户完整重启 VS Code。
 async function runNetworkRepair() {
   const fixed = [];
+  const notes = [];
   const proxyStatus = getGnomeProxyStatus();
   const httpListening = await isPortOpen(HTTP_PROXY_PORT);
   if (proxyStatus.mode === 'manual' && proxyStatus.ownedBySilverVPN && !httpListening) {
@@ -2985,8 +3058,12 @@ async function runNetworkRepair() {
     saveSettings();
     fixed.push({ key: 'diagFixedProxySetting' });
   }
+  const vscodeResidual = detectVscodeProxyResidual();
+  if (vscodeResidual.found.length) {
+    notes.push({ key: 'diagVscodeRepairHint', params: { port: HTTP_PROXY_PORT } });
+  }
   const diagnosis = await runNetworkDiagnostics();
-  return { fixed, diagnosis };
+  return { fixed, notes, diagnosis };
 }
 
 function getInterfaceSummary() {
@@ -3013,6 +3090,61 @@ function getVpnProcesses() {
     .map(line => line.trim())
     .filter(line => /(expressvpn|inode|openvpn|wireguard|wg-quick|tailscale|strongswan|ipsec|mihomo|clash)/i.test(line))
     .slice(0, 20);
+}
+
+// 检测 VS Code 扩展宿主等进程是否仍持有指向本机代理端口的孤儿环境变量。
+// 根因：SilverVPN 停止后，已启动的 VS Code 扩展宿主（extension host / NodeService / Copilot 后端）
+// 仍缓存 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY，导致这些进程的网络请求走已关闭的端口而 ECONNREFUSED。
+// 这类残留无法通过重启窗口清除，必须完整退出并重启 VS Code。
+function detectVscodeProxyResidual() {
+  const residPorts = new Set([HTTP_PROXY_PORT, SOCKS_PROXY_PORT]);
+  const marker = new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${HTTP_PROXY_PORT}$`, 'i');
+  const socksMarker = new RegExp(`^socks5?h?://(127\\.0\\.0\\.1|localhost):${SOCKS_PROXY_PORT}$`, 'i');
+  const vscodeKey = /(vscode|code|copilot|extension.?host|nodeservice|cursor)/i;
+  const proxyList = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'];
+  const found = [];
+
+  let procOutput = captureSync('ps', ['-eo', 'pid=,comm=,args=']);
+  if (!procOutput) {
+    return { found, error: null };
+  }
+  const lines = procOutput.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (!vscodeKey.test(line)) {
+      continue;
+    }
+    const pid = Number(line.split(/\s+/)[0]);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      continue;
+    }
+    let environ = '';
+    try {
+      environ = fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
+    } catch (err) {
+      continue; // 权限/时序问题，跳过
+    }
+    const entries = {};
+    for (const token of environ.split('\0')) {
+      const eq = token.indexOf('=');
+      if (eq <= 0) {
+        continue;
+      }
+      entries[token.slice(0, eq)] = token.slice(eq + 1);
+    }
+    const proxyEntries = proxyList
+      .filter(name => entries[name])
+      .map(name => ({
+        name,
+        value: entries[name],
+        residual: marker.test(entries[name]) || socksMarker.test(entries[name])
+      }))
+      .filter(entry => entry.residual && residPorts.has(Number((entry.value.match(/:(\d+)$/) || [])[1])));
+    if (proxyEntries.length) {
+      found.push({ pid, cmd: line.replace(/\s+/g, ' ').slice(0, 160), proxies: proxyEntries });
+    }
+  }
+  // 去重同一进程
+  return { found, error: null };
 }
 
 function getListeningProxyPorts() {
@@ -3318,7 +3450,7 @@ async function handleGuiAction(action, payload = {}) {
     case 'network-diagnostics':
       return { diagnosis: await runNetworkDiagnostics() };
     case 'fix-network':
-      return { diagnosis: await runNetworkRepair() };
+      return { ...(await runNetworkRepair()) };
     case 'set-tun-mode':
       return setTunMode(Boolean(payload.enabled));
     case 'restore-default-network':

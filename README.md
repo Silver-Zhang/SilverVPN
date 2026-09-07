@@ -17,7 +17,7 @@ The project focuses on practical Linux usage: subscription import, profile manag
 - **Optional TUN mode**: system-level routing for applications that do not support HTTP/SOCKS proxy settings.
 - **Multi-user server support**: per-user data directories, per-user ports, per-user daemon, per-user terminal state, and per-user VS Code Remote settings.
 - **Custom port group**: the GUI network panel and the CLI (`svpn config ports`) share one port configuration, so a change on either side applies to both.
-- **Modern themed UI**: 7 color themes, custom background image, glass opacity, adjustable particle/constellation background, and theme-colored hover glow.
+- **Modern themed UI**: 7 color themes, custom background image, glass opacity, theme-colored hover glow, and a live particle-physics backdrop — place and drag emitters and gravity sources, pick ring-orbit or black-hole capture, and configure spin direction (CW/CCW/random).
 - **Live monitor & traffic stats**: real-time traffic/delay/connection charts (collapsible), per-node traffic over today/3/7/30 days with automatic ledger cleanup.
 - **Developer-tool friendly**: works with terminal tools and remote IDE workflows through explicit proxy variables and VS Code Remote configuration.
 

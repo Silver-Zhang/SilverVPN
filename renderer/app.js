@@ -179,8 +179,33 @@
       particlesOffHint: '关闭后不消耗渲染性能。',
       particlesIntensityLabel: '特效强度',
       particlesIntensityHint: '控制粒子数量与星轨连线密度。',
-      particlesSpeedLabel: '粒子速度',
-      particlesSpeedHint: '粒子飞行与鼠标排斥的响应速度。',
+      particleControlsTitle: '粒子与发射源',
+      ringRadiusLabel: '星环大小',
+      ringRadiusHint: '控制核心引力星环的半径，粒子绕核心公转的轨道大小。',
+      gravityLabel: '引力大小',
+      gravityHint: '控制核心引力源对粒子的吸引强度。',
+      spinDirLabel: '旋转方向',
+      spinDir_ccw: '逆时针',
+      spinDir_cw: '顺时针',
+      spinDir_random: '随机',
+      particlesBounceLabel: '边缘反弹',
+      particlesBounceHint: '开启后粒子碰到边缘反弹，关闭则穿过从另一侧出现。',
+      particlesMouseRepelLabel: '鼠标互动',
+      particlesMouseRepelHint: '开启后鼠标会排斥推开附近粒子。',
+      emittersLabel: '自定义物理发射源',
+      addEmitterBtn: '添加发射源',
+      clearEmittersBtn: '清空',
+      emittersHint: '在页面放置并拖动，点击可切换喷射开/关，持续向外喷粒子；双击页面空白处也可创建。',
+      emittersCleared: '已清空全部物理发射源',
+      emitterAdded: '已添加物理发射源，可拖动位置或点击切换喷射',
+      emitterRemoved: '已移除物理发射源',
+      emitterPaused: '已暂停该发射源喷射',
+      emitterResumed: '已开始该发射源喷射',
+      addGravitySourceBtn: '添加引力源',
+      gravitySourceLabel: '引力源',
+      gravitySourceAdded: '已添加引力源，可拖动位置或点击调节星环与引力',
+      gravitySourceRemoved: '已移除引力源',
+      gravitySourcesCleared: '已清空全部引力源',
       diagRun: '网络诊断',
       diagFix: '一键修复',
       diagFixedToast: '修复完成，请查看诊断结果。',
@@ -192,6 +217,9 @@
       diagProxyResidual: '系统代理残留：仍指向 127.0.0.1:{port} 但核心未运行，插件连接将被拒绝（ECONNREFUSED）',
       diagProxyExternal: '系统代理由其他应用设置（{target}），未处理',
       diagProxyOff: '系统代理已关闭（应用直连）',
+      diagVscodeProxyOk: '未发现 VS Code 扩展宿主残留代理',
+      diagVscodeProxyResidual: '检测到 {procs} 个 VS Code 扩展宿主进程仍持有指向 127.0.0.1:{port} 的代理变量（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY），这些进程的网络请求会失败。需完整退出并重启 VS Code 才能清除，仅重启窗口无效。',
+      diagVscodeRepairHint: '注意：{port} 端口已关闭，但 VS Code 扩展宿主仍缓存代理变量，请完整退出并重启 VS Code（仅重启窗口无效）。',
       diagPathOk: '代理链路正常（测试站点返回 {code}）',
       diagPathFail: '代理链路失败（{code}），请检查节点与配置',
       diagPathSkipped: '代理端口未监听，跳过链路测试',
@@ -349,8 +377,33 @@
       particlesOffHint: 'Disable to save rendering performance.',
       particlesIntensityLabel: 'Intensity',
       particlesIntensityHint: 'Controls particle count and link density.',
-      particlesSpeedLabel: 'Speed',
-      particlesSpeedHint: 'Response speed of particle flight and mouse repulsion.',
+      particleControlsTitle: 'Particles & emitters',
+      ringRadiusLabel: 'Ring size',
+      ringRadiusHint: 'Controls the radius of the core gravity ring — the orbit radius around the core.',
+      gravityLabel: 'Gravity strength',
+      gravityHint: 'Controls the pull strength of the core gravity source on particles.',
+      spinDirLabel: 'Spin direction',
+      spinDir_ccw: 'Counterclockwise',
+      spinDir_cw: 'Clockwise',
+      spinDir_random: 'Random',
+      particlesBounceLabel: 'Edge bounce',
+      particlesBounceHint: 'Particles bounce off edges when on, or wrap around to the opposite side when off.',
+      particlesMouseRepelLabel: 'Mouse interaction',
+      particlesMouseRepelHint: 'When on, the mouse repels nearby particles.',
+      emittersLabel: 'Custom physics emitters',
+      addEmitterBtn: 'Add emitter',
+      clearEmittersBtn: 'Clear',
+      emittersHint: 'Place and drag on the page; click to toggle emitting on/off; double-click a blank area to create one.',
+      emittersCleared: 'All physics emitters cleared',
+      emitterAdded: 'Physics emitter added; drag to move or click to toggle emitting',
+      emitterRemoved: 'Physics emitter removed',
+      emitterPaused: 'Emitter paused',
+      emitterResumed: 'Emitter resumed',
+      addGravitySourceBtn: 'Add gravity source',
+      gravitySourceLabel: 'Gravity source',
+      gravitySourceAdded: 'Gravity source added; drag to move or click to adjust ring & gravity',
+      gravitySourceRemoved: 'Gravity source removed',
+      gravitySourcesCleared: 'All gravity sources cleared',
       diagRun: 'Diagnose network',
       diagFix: 'Fix issues',
       diagFixedToast: 'Repair finished. See the diagnosis below.',
@@ -362,6 +415,9 @@
       diagProxyResidual: 'Leftover system proxy: still points to 127.0.0.1:{port} but the core is stopped — connections will be refused (ECONNREFUSED)',
       diagProxyExternal: 'System proxy is set by another app ({target}); left untouched',
       diagProxyOff: 'System proxy is off (direct connections)',
+      diagVscodeProxyOk: 'No leftover proxy env in VS Code extension hosts',
+      diagVscodeProxyResidual: 'Detected {procs} VS Code extension-host process(es) still holding proxy vars (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY) pointing to 127.0.0.1:{port}; their network requests will fail. A full quit & relaunch of VS Code is required — reloading the window is not enough.',
+      diagVscodeRepairHint: 'Note: port {port} is closed but VS Code extension hosts still cache proxy vars. Fully quit and relaunch VS Code (reloading the window is not enough).',
       diagPathOk: 'Proxy path OK (test site returned {code})',
       diagPathFail: 'Proxy path failed ({code}); check node and config',
       diagPathSkipped: 'Proxy port not listening; path test skipped',
@@ -716,7 +772,6 @@
     }
     const particlesEnabled = settings.particlesEnabled !== false;
     const particlesIntensity = typeof settings.particlesIntensity === 'number' ? settings.particlesIntensity : 0.6;
-    const particlesSpeed = typeof settings.particlesSpeed === 'number' ? settings.particlesSpeed : 1;
     const toggle = $('#particlesEnabled');
     if (toggle && document.activeElement !== toggle) {
       toggle.checked = particlesEnabled;
@@ -729,16 +784,43 @@
     if (particlesValue) {
       particlesValue.textContent = `${Math.round(particlesIntensity * 100)}%`;
     }
-    const speedInput = $('#particlesSpeed');
-    if (speedInput && document.activeElement !== speedInput) {
-      speedInput.value = String(Math.round(particlesSpeed * 100));
+    const ringRadius = typeof settings.ringRadius === 'number' ? settings.ringRadius : 110;
+    const ringInput = $('#particlesRingRadius');
+    if (ringInput && document.activeElement !== ringInput) {
+      ringInput.value = String(Math.round(ringRadius));
     }
-    const speedValue = $('#particlesSpeedValue');
-    if (speedValue) {
-      speedValue.textContent = `${particlesSpeed.toFixed(1)}×`;
+    const ringValue = $('#ringRadiusValue');
+    if (ringValue) {
+      ringValue.textContent = String(Math.round(ringRadius));
+    }
+    const bounce = settings.bounce === true;
+    const bounceInput = $('#particlesBounce');
+    if (bounceInput && document.activeElement !== bounceInput) {
+      bounceInput.checked = bounce;
+    }
+    const mouseRepel = settings.mouseRepel === true;
+    const mouseRepelInput = $('#particlesMouseRepel');
+    if (mouseRepelInput && document.activeElement !== mouseRepelInput) {
+      mouseRepelInput.checked = mouseRepel;
+    }
+    const gravity = typeof settings.gravity === 'number' ? settings.gravity : 1;
+    const gravityInput = $('#particlesGravity');
+    if (gravityInput && document.activeElement !== gravityInput) {
+      gravityInput.value = String(Math.round(gravity * 100));
+    }
+    const gravityValue = $('#gravityValue');
+    if (gravityValue) {
+      gravityValue.textContent = `${gravity.toFixed(1)}×`;
+    }
+    const coreDir = settings.coreDir === 'cw' || settings.coreDir === 'random' ? settings.coreDir : 'ccw';
+    const coreDirRow = $('#coreDirRow');
+    if (coreDirRow) {
+      coreDirRow.querySelectorAll('.dir-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.dir === coreDir);
+      });
     }
     if (window.silverVpnParticles) {
-      window.silverVpnParticles.apply({ enabled: particlesEnabled, intensity: particlesIntensity, speed: particlesSpeed });
+      window.silverVpnParticles.apply({ enabled: particlesEnabled, intensity: particlesIntensity, ringRadius, gravity, coreDir, bounce, mouseRepel });
     }
     $$('.theme-chip').forEach(chip => {
       chip.classList.toggle('active', chip.dataset.theme === theme);
@@ -748,6 +830,541 @@
     } else {
       document.body.style.removeProperty('--user-bg');
     }
+    // 恢复自定义物理发射源
+    if (Array.isArray(settings.particlesEmitters)) {
+      loadEmitters(settings.particlesEmitters);
+    }
+    // 恢复自定义引力源
+    if (Array.isArray(settings.gravitySources)) {
+      loadGravitySources(settings.gravitySources);
+    }
+    // 恢复引力核心位置
+    if (settings.gravityCore && typeof settings.gravityCore.x === 'number' && typeof settings.gravityCore.y === 'number') {
+      loadGravityCore(settings.gravityCore);
+    }
+  }
+
+  // ===== 自定义物理发射源：页面 DOM 节点，可放置/拖动，持续按启动物理规律喷粒子 =====
+  const emitterLayer = document.getElementById('emitterLayer');
+  let emitterCount = 0;
+  const DRAG_THRESHOLD = 4;
+
+  // 生成唯一 id
+  function emitterId() {
+    emitterCount += 1;
+    return `em-${Date.now()}-${emitterCount}`;
+  }
+
+  // 将发射源坐标写回 DOM（相对 emitterLayer 视口）
+  function positionEmitter(node, x, y) {
+    const layerRect = emitterLayer ? emitterLayer.getBoundingClientRect() : { left: 0, top: 0 };
+    node.style.left = `${Math.round(x)}px`;
+    node.style.top = `${Math.round(y)}px`;
+    // 记录相对坐标（0~1），用于窗口缩放后恢复
+    node.dataset.rx = String(x / window.innerWidth);
+    node.dataset.ry = String(y / window.innerHeight);
+    if (window.silverVpnParticles) {
+      window.silverVpnParticles.refreshEmitters();
+    }
+  }
+
+  // 切换发射源喷射开/关
+  function toggleEmitter(node) {
+    const wasEmitting = node.dataset.emitting !== '0';
+    const next = !wasEmitting;
+    node.dataset.emitting = next ? '1' : '0';
+    node.classList.toggle('emitting-off', !next);
+    saveEmitters();
+    toast(next ? t('emitterResumed') : t('emitterPaused'));
+  }
+
+  // 创建发射源节点
+  function createEmitterNode(opts = {}) {
+    if (!emitterLayer) {
+      return null;
+    }
+    const node = document.createElement('div');
+    node.className = 'emitter-node';
+    node.dataset.id = opts.id || emitterId();
+    // 喷射开关：默认开启（"0" 表示关闭）
+    const initialEmitting = opts.emitting !== false;
+    node.dataset.emitting = initialEmitting ? '1' : '0';
+    if (!initialEmitting) {
+      node.classList.add('emitting-off');
+    }
+    node.title = t('emittersLabel');
+    const label = document.createElement('span');
+    label.className = 'emitter-label';
+    label.textContent = '✦';
+    const remove = document.createElement('button');
+    remove.className = 'emitter-remove';
+    remove.type = 'button';
+    remove.title = t('emitterRemoved');
+    remove.setAttribute('aria-label', t('emitterRemoved'));
+    remove.textContent = '×';
+    node.appendChild(label);
+    node.appendChild(remove);
+
+    // 拖动：mousedown 开始；位移超过阈值视为拖动，否则点按
+    let dragging = false;
+    let moved = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    node.addEventListener('mousedown', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      dragging = true;
+      moved = false;
+      startX = event.clientX;
+      startY = event.clientY;
+      const layerRect = emitterLayer.getBoundingClientRect();
+      startLeft = parseFloat(node.style.left) || (node.getBoundingClientRect().left - layerRect.left);
+      startTop = parseFloat(node.style.top) || (node.getBoundingClientRect().top - layerRect.top);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+    const onMove = event => {
+      if (!dragging) {
+        return;
+      }
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) {
+        return;
+      }
+      moved = true;
+      node.classList.add('dragging');
+      const nx = Math.max(0, Math.min(window.innerWidth, startLeft + dx));
+      const ny = Math.max(0, Math.min(window.innerHeight, startTop + dy));
+      positionEmitter(node, nx, ny);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      node.classList.remove('dragging');
+      dragging = false;
+      if (moved) {
+        saveEmitters();
+      } else {
+        // 点击（未拖动）：切换喷射开/关
+        toggleEmitter(node);
+      }
+    };
+    remove.addEventListener('click', event => {
+      event.stopPropagation();
+      node.remove();
+      saveEmitters();
+      toast(t('emitterRemoved'));
+    });
+
+    // 默认放置：视图中心附近
+    const x = typeof opts.x === 'number' ? opts.x : window.innerWidth * 0.5 + (Math.random() - 0.5) * 120;
+    const y = typeof opts.y === 'number' ? opts.y : window.innerHeight * 0.4 + (Math.random() - 0.5) * 120;
+    emitterLayer.appendChild(node);
+    positionEmitter(node, x, y);
+    return node;
+  }
+
+  // 收集所有发射源的相对坐标
+  function collectEmitters() {
+    if (!emitterLayer) {
+      return [];
+    }
+    return Array.from(emitterLayer.querySelectorAll('.emitter-node'))
+      .map(node => {
+        const rx = Number(node.dataset.rx);
+        const ry = Number(node.dataset.ry);
+        // 相对坐标存为 {x,y} 0~1，附带喷射开关状态
+        return {
+          id: node.dataset.id,
+          x: Number.isFinite(rx) ? rx : 0.5,
+          y: Number.isFinite(ry) ? ry : 0.5,
+          emitting: node.dataset.emitting !== '0'
+        };
+      });
+  }
+
+  // 保存发射源到设置
+  function saveEmitters() {
+    const emitters = collectEmitters();
+    state.dashboard.settings.particlesEmitters = emitters;
+    callAction('set-appearance', { particlesEmitters: emitters }, '');
+  }
+
+  // 从设置加载发射源（相对坐标 -> 视口坐标）
+  // 幂等：仅当发射源层为空（初次）时才加载，避免拖动/设置更新时重建已存在节点
+  function loadEmitters(list) {
+    if (!emitterLayer) {
+      return;
+    }
+    const existing = emitterLayer.querySelectorAll('.emitter-node').length;
+    if (existing > 0) {
+      return;
+    }
+    const items = Array.isArray(list) ? list : [];
+    if (!items.length) {
+      return;
+    }
+    for (const item of items) {
+      const x = (Number(item.x) || 0.5) * window.innerWidth;
+      const y = (Number(item.y) || 0.5) * window.innerHeight;
+      createEmitterNode({ id: item.id, x, y, emitting: item.emitting !== false });
+    }
+  }
+
+  function clearEmitters() {
+    if (!emitterLayer) {
+      return;
+    }
+    emitterLayer.querySelectorAll('.emitter-node').forEach(node => node.remove());
+    state.dashboard.settings.particlesEmitters = [];
+    callAction('set-appearance', { particlesEmitters: [] }, '');
+    toast(t('emittersCleared'));
+    if (window.silverVpnParticles) {
+      window.silverVpnParticles.refreshEmitters();
+    }
+  }
+
+  // ===== 自定义引力源：可放置/拖动的迷你黑洞，点击弹出面板调节引力大小 =====
+  let gravitySourceCount = 0;
+
+  function gravitySourceId() {
+    gravitySourceCount += 1;
+    return `gs-${Date.now()}-${gravitySourceCount}`;
+  }
+
+  function positionGravitySource(node, x, y) {
+    node.style.left = `${Math.round(x)}px`;
+    node.style.top = `${Math.round(y)}px`;
+    node.dataset.rx = String(x / window.innerWidth);
+    node.dataset.ry = String(y / window.innerHeight);
+    if (window.silverVpnParticles) {
+      window.silverVpnParticles.refreshGravitySources();
+    }
+  }
+
+  // 创建引力源节点（含调节面板：星环半径 + 引力大小，星环 0 = 黑洞）
+  function createGravitySourceNode(opts = {}) {
+    if (!emitterLayer) {
+      return null;
+    }
+    const node = document.createElement('div');
+    node.className = 'gravity-source-node';
+    node.dataset.id = opts.id || gravitySourceId();
+    node.dataset.ring = String(typeof opts.ringRadius === 'number' ? opts.ringRadius : 110);
+    node.dataset.gravity = String(typeof opts.gravity === 'number' ? opts.gravity : 1);
+    node.dataset.dir = opts.dir === 'cw' || opts.dir === 'ccw' ? opts.dir : 'random';
+    node.title = t('gravitySourceLabel');
+
+    const core = document.createElement('span');
+    core.className = 'gs-core';
+    core.textContent = '◉';
+    const remove = document.createElement('button');
+    remove.className = 'gs-remove';
+    remove.type = 'button';
+    remove.setAttribute('aria-label', t('gravitySourceRemoved'));
+    remove.textContent = '×';
+    node.appendChild(core);
+    node.appendChild(remove);
+
+    // 调节面板（点击后展开）
+    const panel = document.createElement('div');
+    panel.className = 'gs-panel';
+    panel.hidden = true;
+    const ringLabel = document.createElement('label');
+    ringLabel.className = 'gs-field-label';
+    ringLabel.innerHTML = `<span>${t('ringRadiusLabel')}</span><span class="gs-ring-val">${node.dataset.ring}</span>`;
+    const ringInput = document.createElement('input');
+    ringInput.type = 'range';
+    ringInput.min = '0';
+    ringInput.max = '250';
+    ringInput.step = '5';
+    ringInput.value = node.dataset.ring;
+    const gravityLabel = document.createElement('label');
+    gravityLabel.className = 'gs-field-label';
+    gravityLabel.innerHTML = `<span>${t('gravityLabel')}</span><span class="gs-gravity-val">${(Number(node.dataset.gravity)).toFixed(1)}×</span>`;
+    const gravityInput = document.createElement('input');
+    gravityInput.type = 'range';
+    gravityInput.min = '0';
+    gravityInput.max = '1000';
+    gravityInput.step = '10';
+    gravityInput.value = String(Math.round(Number(node.dataset.gravity) * 100));
+    panel.appendChild(ringLabel);
+    panel.appendChild(ringInput);
+    panel.appendChild(gravityLabel);
+    panel.appendChild(gravityInput);
+    // 公转方向选择（顺时针 / 逆时针 / 随机）
+    const dirLabel = document.createElement('label');
+    dirLabel.className = 'gs-field-label';
+    dirLabel.innerHTML = `<span>${t('spinDirLabel')}</span>`;
+    const dirRow = document.createElement('div');
+    dirRow.className = 'gs-dir-row';
+    ['ccw', 'cw', 'random'].forEach(value => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'gs-dir-btn';
+      btn.dataset.dir = value;
+      btn.textContent = t(`spinDir_${value}`);
+      btn.classList.toggle('active', node.dataset.dir === value);
+      btn.addEventListener('click', () => {
+        node.dataset.dir = value;
+        dirRow.querySelectorAll('.gs-dir-btn').forEach(b => b.classList.toggle('active', b.dataset.dir === value));
+        if (window.silverVpnParticles) {
+          window.silverVpnParticles.refreshGravitySources();
+        }
+        saveGravitySources();
+      });
+      dirRow.appendChild(btn);
+    });
+    panel.appendChild(dirLabel);
+    panel.appendChild(dirRow);
+    node.appendChild(panel);
+
+    // 调节滑块实时更新
+    ringInput.addEventListener('input', () => {
+      node.dataset.ring = ringInput.value;
+      ringLabel.querySelector('.gs-ring-val').textContent = ringInput.value;
+      if (window.silverVpnParticles) {
+        window.silverVpnParticles.refreshGravitySources();
+      }
+    });
+    ringInput.addEventListener('change', () => saveGravitySources());
+    gravityInput.addEventListener('input', () => {
+      const val = Number(gravityInput.value) / 100;
+      node.dataset.gravity = String(val);
+      gravityLabel.querySelector('.gs-gravity-val').textContent = `${val.toFixed(1)}×`;
+      if (window.silverVpnParticles) {
+        window.silverVpnParticles.refreshGravitySources();
+      }
+    });
+    gravityInput.addEventListener('change', () => saveGravitySources());
+
+    // 拖动：mousedown 开始；位移超过阈值视为拖动，否则点击切换面板
+    let dragging = false;
+    let moved = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    node.addEventListener('mousedown', event => {
+      // 点在调节面板内部（滑块/标签）时，不启动拖动，让面板控件正常交互
+      if (event.target.closest('.gs-panel')) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      dragging = true;
+      moved = false;
+      startX = event.clientX;
+      startY = event.clientY;
+      const layerRect = emitterLayer.getBoundingClientRect();
+      startLeft = parseFloat(node.style.left) || (node.getBoundingClientRect().left - layerRect.left);
+      startTop = parseFloat(node.style.top) || (node.getBoundingClientRect().top - layerRect.top);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+    const onMove = event => {
+      if (!dragging) {
+        return;
+      }
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) {
+        return;
+      }
+      moved = true;
+      node.classList.add('dragging');
+      const nx = Math.max(0, Math.min(window.innerWidth, startLeft + dx));
+      const ny = Math.max(0, Math.min(window.innerHeight, startTop + dy));
+      positionGravitySource(node, nx, ny);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      node.classList.remove('dragging');
+      dragging = false;
+      if (moved) {
+        saveGravitySources();
+      } else {
+        // 点击（未拖动）：切换调节面板
+        panel.hidden = !panel.hidden;
+        if (!panel.hidden) {
+          // 关闭其它引力源面板
+          emitterLayer.querySelectorAll('.gravity-source-node .gs-panel').forEach(other => {
+            if (other !== panel) {
+              other.hidden = true;
+            }
+          });
+        }
+      }
+    };
+    remove.addEventListener('click', event => {
+      event.stopPropagation();
+      node.remove();
+      saveGravitySources();
+      toast(t('gravitySourceRemoved'));
+    });
+
+    // 默认放置：视图中心偏下
+    const x = typeof opts.x === 'number' ? opts.x : window.innerWidth * 0.5 + (Math.random() - 0.5) * 160;
+    const y = typeof opts.y === 'number' ? opts.y : window.innerHeight * 0.55 + (Math.random() - 0.5) * 120;
+    emitterLayer.appendChild(node);
+    positionGravitySource(node, x, y);
+    return node;
+  }
+
+  function collectGravitySources() {
+    if (!emitterLayer) {
+      return [];
+    }
+    return Array.from(emitterLayer.querySelectorAll('.gravity-source-node'))
+      .map(node => {
+        const rx = Number(node.dataset.rx);
+        const ry = Number(node.dataset.ry);
+        return {
+          id: node.dataset.id,
+          x: Number.isFinite(rx) ? rx : 0.5,
+          y: Number.isFinite(ry) ? ry : 0.5,
+          ringRadius: Math.min(250, Math.max(0, node.dataset.ring === undefined ? 110 : Number(node.dataset.ring))),
+          gravity: Math.min(10, Math.max(0, node.dataset.gravity === undefined ? 1 : Number(node.dataset.gravity))),
+          dir: node.dataset.dir === 'cw' || node.dataset.dir === 'ccw' ? node.dataset.dir : 'random'
+        };
+      });
+  }
+
+  function saveGravitySources() {
+    const sources = collectGravitySources();
+    state.dashboard.settings.gravitySources = sources;
+    callAction('set-appearance', { gravitySources: sources }, '');
+  }
+
+  function loadGravitySources(list) {
+    if (!emitterLayer) {
+      return;
+    }
+    const existing = emitterLayer.querySelectorAll('.gravity-source-node').length;
+    if (existing > 0) {
+      return;
+    }
+    const items = Array.isArray(list) ? list : [];
+    for (const item of items) {
+      const x = (Number(item.x) || 0.5) * window.innerWidth;
+      const y = (Number(item.y) || 0.5) * window.innerHeight;
+      createGravitySourceNode({
+        id: item.id,
+        x,
+        y,
+        ringRadius: Number.isFinite(Number(item.ringRadius)) ? Number(item.ringRadius) : 110,
+        gravity: Number.isFinite(Number(item.gravity)) ? Number(item.gravity) : 1,
+        dir: item.dir
+      });
+    }
+  }
+
+  function clearGravitySources() {
+    if (!emitterLayer) {
+      return;
+    }
+    emitterLayer.querySelectorAll('.gravity-source-node').forEach(node => node.remove());
+    state.dashboard.settings.gravitySources = [];
+    callAction('set-appearance', { gravitySources: [] }, '');
+    toast(t('gravitySourcesCleared'));
+    if (window.silverVpnParticles) {
+      window.silverVpnParticles.refreshGravitySources();
+    }
+  }
+
+  // ===== 引力核心：独立的可拖动黑洞引力源（HUD 光球），默认居中 =====
+  const gravityCore = document.getElementById('gravityCore');
+  const GRAVITY_DRAG_THRESHOLD = 4;
+  const GRAVITY_HALF = 32; // 光球 64px 的一半
+
+  // 将引力核心中心坐标写回 DOM（x/y 为中心点，记录 0~1 相对坐标用于缩放恢复）
+  function positionGravityCore(cx, cy) {
+    if (!gravityCore) {
+      return;
+    }
+    gravityCore.style.left = `${Math.round(cx - GRAVITY_HALF)}px`;
+    gravityCore.style.top = `${Math.round(cy - GRAVITY_HALF)}px`;
+    gravityCore.style.margin = '0';
+    gravityCore.dataset.rx = String(cx / window.innerWidth);
+    gravityCore.dataset.ry = String(cy / window.innerHeight);
+  }
+
+  // 保存引力核心位置到设置
+  function saveGravityCore() {
+    if (!gravityCore) {
+      return;
+    }
+    const rx = Number(gravityCore.dataset.rx);
+    const ry = Number(gravityCore.dataset.ry);
+    const pos = {
+      x: Number.isFinite(rx) ? rx : 0.5,
+      y: Number.isFinite(ry) ? ry : 0.5
+    };
+    state.dashboard.settings.gravityCore = pos;
+    callAction('set-appearance', { gravityCore: pos }, '');
+  }
+
+  // 从设置加载引力核心位置（相对坐标 -> 视口坐标）
+  function loadGravityCore(pos) {
+    if (!gravityCore || !pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') {
+      return;
+    }
+    positionGravityCore(pos.x * window.innerWidth, pos.y * window.innerHeight);
+  }
+
+  // 初始化引力核心拖动
+  function initGravityCoreDrag() {
+    if (!gravityCore) {
+      return;
+    }
+    let dragging = false;
+    let moved = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    gravityCore.addEventListener('mousedown', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      dragging = true;
+      moved = false;
+      startX = event.clientX;
+      startY = event.clientY;
+      const rect = gravityCore.getBoundingClientRect();
+      startLeft = rect.left;
+      startTop = rect.top;
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+    const onMove = event => {
+      if (!dragging) {
+        return;
+      }
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) < GRAVITY_DRAG_THRESHOLD) {
+        return;
+      }
+      moved = true;
+      gravityCore.classList.add('dragging');
+      // 中心坐标：初始中心 = startLeft + GRAVITY_HALF，加上位移
+      const nx = Math.max(GRAVITY_HALF, Math.min(window.innerWidth - GRAVITY_HALF, startLeft + GRAVITY_HALF + dx));
+      const ny = Math.max(GRAVITY_HALF, Math.min(window.innerHeight - GRAVITY_HALF, startTop + GRAVITY_HALF + dy));
+      positionGravityCore(nx, ny);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      gravityCore.classList.remove('dragging');
+      dragging = false;
+      if (moved) {
+        saveGravityCore();
+      }
+    };
   }
 
   function readImageDataUrl(file) {
@@ -870,6 +1487,12 @@
       if (kpiCoreValue) {
         kpiCoreValue.classList.toggle('dim', !core.running);
       }
+    }
+    // 独立的引力核心（可拖动黑洞）同步状态 class
+    const gravityCore = $('#gravityCore');
+    if (gravityCore) {
+      gravityCore.classList.toggle('is-on', Boolean(core.running));
+      gravityCore.classList.toggle('is-off', !core.running);
     }
     setText('#currentProxy', proxies.current || t('noNode'));
     setText('#httpPort', config.httpPort || '-');
@@ -1628,6 +2251,13 @@
         const result = await callAction('fix-network', {});
         renderDiagnostics(result && result.diagnosis);
         toast(t('diagFixedToast'));
+        // 若有"需完整重启 VS Code"的提示，追加提醒
+        const notes = result && result.notes;
+        if (notes && notes.length) {
+          setTimeout(() => {
+            toast(notes.map(note => t(note.key, note.params)).join(' '));
+          }, 400);
+        }
       } catch (_error) {
         // callAction 已提示错误
       }
@@ -1667,6 +2297,20 @@
       }
       callAction('set-appearance', { particlesEnabled: enabled }, t('appearanceSaved'));
     });
+    $('#particlesBounce').addEventListener('change', event => {
+      const bounce = event.target.checked;
+      if (window.silverVpnParticles) {
+        window.silverVpnParticles.apply({ bounce });
+      }
+      callAction('set-appearance', { bounce }, t('appearanceSaved'));
+    });
+    $('#particlesMouseRepel').addEventListener('change', event => {
+      const mouseRepel = event.target.checked;
+      if (window.silverVpnParticles) {
+        window.silverVpnParticles.apply({ mouseRepel });
+      }
+      callAction('set-appearance', { mouseRepel }, t('appearanceSaved'));
+    });
     $('#particlesIntensity').addEventListener('input', event => {
       const value = Number(event.target.value);
       if (window.silverVpnParticles) {
@@ -1680,18 +2324,110 @@
     $('#particlesIntensity').addEventListener('change', event => {
       callAction('set-appearance', { particlesIntensity: Number(event.target.value) / 100 }, t('appearanceSaved'));
     });
-    $('#particlesSpeed').addEventListener('input', event => {
-      const value = Number(event.target.value) / 100;
-      if (window.silverVpnParticles) {
-        window.silverVpnParticles.apply({ speed: value });
+    const ringRadiusInput = $('#particlesRingRadius');
+    if (ringRadiusInput) {
+      ringRadiusInput.addEventListener('input', event => {
+        const value = Number(event.target.value);
+        if (window.silverVpnParticles) {
+          window.silverVpnParticles.apply({ ringRadius: value });
+        }
+        const label = $('#ringRadiusValue');
+        if (label) {
+          label.textContent = String(Math.round(value));
+        }
+      });
+      ringRadiusInput.addEventListener('change', event => {
+        callAction('set-appearance', { ringRadius: Number(event.target.value) }, t('appearanceSaved'));
+      });
+    }
+    const gravityInput = $('#particlesGravity');
+    if (gravityInput) {
+      gravityInput.addEventListener('input', event => {
+        const value = Number(event.target.value) / 100;
+        if (window.silverVpnParticles) {
+          window.silverVpnParticles.apply({ gravity: value });
+        }
+        const label = $('#gravityValue');
+        if (label) {
+          label.textContent = `${value.toFixed(1)}×`;
+        }
+      });
+      gravityInput.addEventListener('change', event => {
+        callAction('set-appearance', { gravity: Number(event.target.value) / 100 }, t('appearanceSaved'));
+      });
+    }
+    // 核心源旋转方向选择
+    const coreDirRow = $('#coreDirRow');
+    if (coreDirRow) {
+      coreDirRow.querySelectorAll('.dir-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const dir = btn.dataset.dir;
+          coreDirRow.querySelectorAll('.dir-btn').forEach(b => b.classList.toggle('active', b === btn));
+          if (window.silverVpnParticles) {
+            window.silverVpnParticles.apply({ coreDir: dir });
+          }
+          callAction('set-appearance', { coreDir: dir }, t('appearanceSaved'));
+        });
+      });
+    }
+
+    // 自定义物理发射源/引力源：添加/清空，双击页面空白处创建发射源
+    const addEmitterBtn = $('#addEmitter');
+    if (addEmitterBtn) {
+      addEmitterBtn.addEventListener('click', () => {
+        createEmitterNode();
+        saveEmitters();
+        toast(t('emitterAdded'));
+      });
+    }
+    const addGravitySourceBtn = $('#addGravitySource');
+    if (addGravitySourceBtn) {
+      addGravitySourceBtn.addEventListener('click', () => {
+        createGravitySourceNode();
+        saveGravitySources();
+        toast(t('gravitySourceAdded'));
+      });
+    }
+    const clearEmittersBtn = $('#clearEmitters');
+    if (clearEmittersBtn) {
+      clearEmittersBtn.addEventListener('click', () => {
+        clearEmitters();
+        clearGravitySources();
+      });
+    }
+    document.addEventListener('dblclick', event => {
+      // 双击空白处（避开交互控件/发射源/引力源自身）创建发射源
+      const target = event.target;
+      if (!target || target.closest('.emitter-node') || target.closest('.gravity-source-node') || target.closest('#gravityCore') || target.closest('button, input, select, a, textarea, .panel, .topbar')) {
+        return;
       }
-      const label = $('#particlesSpeedValue');
-      if (label) {
-        label.textContent = `${(value).toFixed(1)}×`;
-      }
+      const x = event.clientX;
+      const y = event.clientY;
+      createEmitterNode({ x, y });
+      saveEmitters();
+      toast(t('emitterAdded'));
     });
-    $('#particlesSpeed').addEventListener('change', event => {
-      callAction('set-appearance', { particlesSpeed: Number(event.target.value) / 100 }, t('appearanceSaved'));
+    // 初始化引力核心拖动
+    initGravityCoreDrag();
+    // 窗口缩放：按相对坐标重新定位发射源/引力源/引力核心，避免拖出屏幕边界
+    window.addEventListener('resize', () => {
+      if (emitterLayer) {
+        emitterLayer.querySelectorAll('.emitter-node').forEach(node => {
+          const rx = (Number(node.dataset.rx) || 0.5) * window.innerWidth;
+          const ry = (Number(node.dataset.ry) || 0.5) * window.innerHeight;
+          positionEmitter(node, rx, ry);
+        });
+        emitterLayer.querySelectorAll('.gravity-source-node').forEach(node => {
+          const rx = (Number(node.dataset.rx) || 0.5) * window.innerWidth;
+          const ry = (Number(node.dataset.ry) || 0.5) * window.innerHeight;
+          positionGravitySource(node, rx, ry);
+        });
+      }
+      if (gravityCore) {
+        const rx = (Number(gravityCore.dataset.rx) || 0.5) * window.innerWidth;
+        const ry = (Number(gravityCore.dataset.ry) || 0.5) * window.innerHeight;
+        positionGravityCore(rx, ry);
+      }
     });
 
     $('#loginForm').addEventListener('submit', event => {
@@ -1755,7 +2491,6 @@
         glassEnabled: true,
         particlesEnabled: true,
         particlesIntensity: 0.6,
-        particlesSpeed: 1,
         monitorCollapsed: false,
         trafficCollapsed: false,
         defaultBypassHosts: ['localhost', '127.0.0.0/8', '192.168.0.0/16'],
@@ -1869,7 +2604,14 @@
         glassEnabled: typeof payload.glassEnabled === 'boolean' ? payload.glassEnabled : state.dashboard.settings.glassEnabled,
         particlesEnabled: typeof payload.particlesEnabled === 'boolean' ? payload.particlesEnabled : state.dashboard.settings.particlesEnabled,
         particlesIntensity: typeof payload.particlesIntensity === 'number' ? payload.particlesIntensity : state.dashboard.settings.particlesIntensity,
-        particlesSpeed: typeof payload.particlesSpeed === 'number' ? payload.particlesSpeed : state.dashboard.settings.particlesSpeed,
+        ringRadius: typeof payload.ringRadius === 'number' ? payload.ringRadius : state.dashboard.settings.ringRadius,
+        gravity: typeof payload.gravity === 'number' ? payload.gravity : state.dashboard.settings.gravity,
+        coreDir: typeof payload.coreDir === 'string' ? payload.coreDir : state.dashboard.settings.coreDir,
+        bounce: typeof payload.bounce === 'boolean' ? payload.bounce : state.dashboard.settings.bounce,
+        mouseRepel: typeof payload.mouseRepel === 'boolean' ? payload.mouseRepel : state.dashboard.settings.mouseRepel,
+        gravityCore: payload.gravityCore && typeof payload.gravityCore.x === 'number' ? payload.gravityCore : state.dashboard.settings.gravityCore,
+        particlesEmitters: Array.isArray(payload.particlesEmitters) ? payload.particlesEmitters : state.dashboard.settings.particlesEmitters,
+        gravitySources: Array.isArray(payload.gravitySources) ? payload.gravitySources : state.dashboard.settings.gravitySources,
         monitorCollapsed: typeof payload.monitorCollapsed === 'boolean' ? payload.monitorCollapsed : state.dashboard.settings.monitorCollapsed,
         trafficCollapsed: typeof payload.trafficCollapsed === 'boolean' ? payload.trafficCollapsed : state.dashboard.settings.trafficCollapsed
       });
@@ -1954,7 +2696,7 @@
       return { ok: true, host: payload.host, port: payload.port, elapsedMs: 18 };
     }
     if (action === 'check-update') {
-      return { checked: true, currentVersion: '0.1.0', latestVersion: '0.2.0', available: true, dismissed: false };
+      return { checked: true, currentVersion: '0.2.0', latestVersion: '0.3.0', available: true, dismissed: false };
     }
     if (action === 'monitor-stats') {
       return {

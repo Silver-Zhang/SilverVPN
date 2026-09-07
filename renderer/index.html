@@ -57,16 +57,47 @@
           <span class="kpi-foot" data-i18n="kpiNodesFoot">当前配置可用节点</span>
         </div>
         <div id="kpiCoreCard" class="kpi-card kpi-core">
-          <span class="kpi-icon" aria-hidden="true">◉</span>
-          <span class="kpi-hud" aria-hidden="true">
-            <span class="hud-wave"></span>
-            <span class="hud-wave hud-wave-2"></span>
-            <span class="hud-core"></span>
-            <span class="hud-orbit"><i></i><i></i><i></i></span>
-          </span>
-          <span class="kpi-label" data-i18n="kpiCoreLabel">核心状态</span>
-          <span id="kpiCore" class="kpi-value dim">读取中</span>
-          <span class="kpi-foot" data-i18n="kpiCoreFoot">mihomo 运行状态</span>
+          <div class="core-body">
+            <div class="core-side core-left">
+              <span class="kpi-label" data-i18n="kpiCoreLabel">核心状态</span>
+              <span id="kpiCore" class="kpi-value dim">读取中</span>
+              <span class="kpi-foot" data-i18n="kpiCoreFoot">mihomo 运行状态</span>
+            </div>
+            <div class="core-side core-right">
+              <div class="core-right-top">
+                <label class="switch-row core-switch"><input id="particlesEnabled" type="checkbox" checked /> <span data-i18n="particlesLabel">粒子特效</span></label>
+                <label class="switch-row core-switch"><input id="particlesBounce" type="checkbox" /> <span data-i18n="particlesBounceLabel">边缘反弹</span></label>
+                <label class="switch-row core-switch"><input id="particlesMouseRepel" type="checkbox" /> <span data-i18n="particlesMouseRepelLabel">鼠标互动</span></label>
+                <div class="button-row core-emitter-btns">
+                  <button id="addEmitter" class="button button-small" type="button" data-i18n="addEmitterBtn">添加发射源</button>
+                  <button id="addGravitySource" class="button button-small" type="button" data-i18n="addGravitySourceBtn">添加引力源</button>
+                  <button id="clearEmitters" class="button button-small" type="button" data-i18n="clearEmittersBtn">清空</button>
+                </div>
+              </div>
+              <div class="core-right-sliders">
+                <div class="core-ctl">
+                  <label class="field-label" for="particlesIntensity"><span data-i18n="particlesIntensityLabel">特效强度</span> <span id="particlesValue" class="slider-value">60%</span></label>
+                  <input id="particlesIntensity" type="range" min="10" max="100" step="5" value="60" />
+                </div>
+                <div class="core-ctl">
+                  <label class="field-label" for="particlesRingRadius"><span data-i18n="ringRadiusLabel">星环大小</span> <span id="ringRadiusValue" class="slider-value">110</span></label>
+                  <input id="particlesRingRadius" type="range" min="0" max="250" step="5" value="110" />
+                </div>
+                <div class="core-ctl">
+                  <label class="field-label" for="particlesGravity"><span data-i18n="gravityLabel">引力大小</span> <span id="gravityValue" class="slider-value">1.0×</span></label>
+                  <input id="particlesGravity" type="range" min="0" max="1000" step="10" value="100" />
+                </div>
+                <div class="core-ctl">
+                  <label class="field-label" data-i18n="spinDirLabel">旋转方向</label>
+                  <div id="coreDirRow" class="dir-row">
+                    <button type="button" class="dir-btn" data-dir="ccw" data-i18n="spinDir_ccw">逆时针</button>
+                    <button type="button" class="dir-btn" data-dir="cw" data-i18n="spinDir_cw">顺时针</button>
+                    <button type="button" class="dir-btn" data-dir="random" data-i18n="spinDir_random">随机</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="kpi-card kpi-proxy">
           <span class="kpi-icon" aria-hidden="true">⇄</span>
@@ -411,26 +442,6 @@
               <p class="appearance-hint" data-i18n="glassBlurHint">0 为纯透玻璃（仅透明无模糊），100 为强毛玻璃。</p>
             </div>
           </div>
-          <div class="appearance-row">
-            <div class="appearance-col">
-              <label class="field-label" for="particlesEnabled" data-i18n="particlesLabel">粒子特效</label>
-              <label class="switch-row"><input id="particlesEnabled" type="checkbox" checked /> <span data-i18n="particlesToggleText">动态粒子 / 星轨连线</span></label>
-              <p class="appearance-hint" data-i18n="particlesOffHint">关闭后不消耗渲染性能。</p>
-            </div>
-            <div class="appearance-col">
-              <label class="field-label" for="particlesIntensity"><span data-i18n="particlesIntensityLabel">特效强度</span> <span id="particlesValue" class="slider-value">60%</span></label>
-              <input id="particlesIntensity" type="range" min="10" max="100" step="5" value="60" />
-              <p class="appearance-hint" data-i18n="particlesIntensityHint">控制粒子数量、速度与星轨连线密度。</p>
-            </div>
-          </div>
-          <div class="appearance-row">
-            <div class="appearance-col">
-              <label class="field-label" for="particlesSpeed"><span data-i18n="particlesSpeedLabel">粒子速度</span> <span id="particlesSpeedValue" class="slider-value">1.0×</span></label>
-              <input id="particlesSpeed" type="range" min="20" max="200" step="10" value="100" />
-              <p class="appearance-hint" data-i18n="particlesSpeedHint">飞行与排斥的响应速度。</p>
-            </div>
-            <div class="appearance-col"></div>
-          </div>
         </section>
 
         <section class="panel paths-panel span-12" aria-labelledby="pathsTitle">
@@ -459,6 +470,17 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <!-- 自定义物理发射源交互层：悬浮于粒子 canvas 之上，可放置/拖动 -->
+    <div id="emitterLayer" aria-hidden="true"></div>
+    <!-- 引力核心：独立的可拖动黑洞引力源（HUD 光球），默认居中 -->
+    <div id="gravityCore" class="gravity-core-node is-on">
+      <span class="kpi-hud" aria-hidden="true">
+        <span class="hud-wave"></span>
+        <span class="hud-wave hud-wave-2"></span>
+        <span class="hud-core"></span>
+        <span class="hud-orbit"><i></i><i></i><i></i></span>
+      </span>
+    </div>
     <script src="./app.js"></script>
     <script src="./particles.js"></script>
   </body>

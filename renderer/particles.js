@@ -12,18 +12,18 @@
   const particles = [];
   const mouse = { x: -9999, y: -9999 };
 
-  // 用户配置：开关 + 强度（0.1 ~ 1）+ 速度倍率（0.2 ~ 2）
-  const cfg = { enabled: true, intensity: 0.6, speed: 1 };
+  // 用户配置：开关 + 强度 + 内部速度基准 + 星环半径 + 引力大小 + 公转方向 + 边缘反弹 + 鼠标排斥
+  const cfg = { enabled: true, intensity: 0.6, speed: 1, ringRadius: 110, gravity: 1, coreDir: 'ccw', bounce: false, mouseRepel: false };
   let rafId = 0;
   let running = false;
+  // 窗口隐藏（关闭到托盘/最小化）时暂停渲染，节省 GPU/CPU 与内存；重新显示时恢复
+  let suspended = false;
 
-  // 核心状态机：运行 = 绿色慢速吸积 + 星环；停止 = 红色 + 粒子全部吸走
+  // 核心状态机：运行 = 真实引力源（黑洞式吸积）；停止 = 红色 + 粒子全部吸走
   // 过渡：absorbing（红色把所有粒子吸入）→ off；releasing（从核心理出）→ on
   const core = { mode: 'on', emitCarry: 0, onGraceUntil: 0 };
   const HUD_CATCH_RADIUS = 30;
   const HUD_GLOW_RADIUS = 260;
-  const RING_INNER = 42;
-  const RING_OUTER = 150;
   const MODE_COLOR = {
     on: { r: 52, g: 211, b: 153 },
     off: { r: 248, g: 113, b: 113 },
@@ -74,10 +74,75 @@
   // HUD 能量核心（引力源）位置跟踪：黑洞式吸入粒子
   const hud = { x: -9999, y: -9999, active: false };
 
+  // 自定义物理发射源：页面上可放置/拖动的 DOM 节点，点击切换喷射开/关
+  // 每个发射源 { id, x, y, nextEmitAt, emitting }，x/y 为 CSS 像素坐标，nextEmitAt 为下次喷射时间戳
+  const MAX_PARTICLES = 260; // 全局粒子数硬上限（性能保护，发射源持续喷时按 FIFO 滚动替换）
+  const emitters = [];
+
+  // 自定义引力源：页面上可放置/拖动的 DOM 节点，各自有独立的星环半径、引力大小与公转方向
+  // 每个引力源 { id, x, y, ringRadius, gravity, dir }，dir: 'ccw' | 'cw' | 'random'
+  const gravitySources = [];
+
+  function refreshGravitySources() {
+    // 按 id 复用已有对象（保留参数与 dir），只更新位置与参数；新增/删除同步
+    const nodes = document.querySelectorAll('.gravity-source-node');
+    const next = [];
+    for (const node of nodes) {
+      const id = node.dataset.id || '';
+      const rect = node.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const ringRadius = Math.min(250, Math.max(0, node.dataset.ring === undefined ? 110 : Number(node.dataset.ring)));
+      const gravity = Math.min(10, Math.max(0, node.dataset.gravity === undefined ? 1 : Number(node.dataset.gravity)));
+      const dir = node.dataset.dir === 'cw' || node.dataset.dir === 'ccw' ? node.dataset.dir : 'random';
+      const existing = gravitySources.find(gs => gs.id === id);
+      if (existing) {
+        existing.x = x;
+        existing.y = y;
+        existing.ringRadius = ringRadius;
+        existing.gravity = gravity;
+        existing.dir = dir;
+        next.push(existing);
+      } else {
+        next.push({ id, x, y, ringRadius, gravity, dir });
+      }
+    }
+    gravitySources.length = 0;
+    for (const gs of next) {
+      gravitySources.push(gs);
+    }
+  }
+
+  function refreshEmitters() {
+    // 按 id 复用已有发射源对象（保留 nextEmitAt 喷射节奏），只更新位置与开关状态；新增/删除同步
+    const nodes = document.querySelectorAll('.emitter-node');
+    const next = [];
+    for (const node of nodes) {
+      const id = node.dataset.id || '';
+      const rect = node.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const emitting = node.dataset.emitting !== '0'; // 默认开（"0" 为关）
+      const existing = emitters.find(em => em.id === id);
+      if (existing) {
+        existing.x = x;
+        existing.y = y;
+        existing.active = true;
+        existing.emitting = emitting;
+        next.push(existing);
+      } else {
+        next.push({ id, x, y, active: true, emitting });
+      }
+    }
+    emitters.length = 0;
+    for (const em of next) {
+      emitters.push(em);
+    }
+  }
+
   function updateHudAnchor() {
-    const el = document.querySelector('#kpiCoreCard .kpi-hud');
-    const card = document.getElementById('kpiCoreCard');
-    if (!el || !card) {
+    const el = document.getElementById('gravityCore');
+    if (!el) {
       hud.active = false;
       return;
     }
@@ -87,36 +152,125 @@
     hud.active = true;
   }
 
+  // 核心源公转方向符号：ccw=+1，cw=-1，random=随机 ±1
+  function coreDirSign() {
+    if (cfg.coreDir === 'cw') {
+      return -1;
+    }
+    if (cfg.coreDir === 'random') {
+      return Math.random() < 0.5 ? 1 : -1;
+    }
+    return 1; // 默认 ccw 逆时针
+  }
+
   function respawnParticle(particle) {
-    const radius = HUD_GLOW_RADIUS * (1.5 + Math.random() * 0.8);
+    // 落入核心后重新投放到星环轨道（赋予切向速度继续公转）；黑洞模式下投到较远处再被吸入
+    const ringR = cfg.ringRadius;
+    const p = params();
+    const GM = 900 * p.gravityStrength * (cfg.gravity || 1);
     const angle = Math.random() * Math.PI * 2;
-    particle.x = hud.x + Math.cos(angle) * radius;
-    particle.y = hud.y + Math.sin(angle) * radius;
+    const r = ringR > 0
+      ? ringR * (0.85 + Math.random() * 0.3)
+      : 150 + Math.random() * 150;
+    const vOrbit = Math.sqrt(GM / Math.max(r, 20));
+    // 公转方向遵循核心源配置
+    const dir = coreDirSign();
+    particle.x = hud.x + Math.cos(angle) * r;
+    particle.y = hud.y + Math.sin(angle) * r;
+    particle.vx = -Math.sin(angle) * vOrbit * dir;
+    particle.vy = Math.cos(angle) * vOrbit * dir;
+    particle.dir = dir;
     if (particle.x < 0 || particle.x > width || particle.y < 0 || particle.y > height) {
       particle.x = Math.random() * width;
       particle.y = Math.random() * height;
+      particle.vx = 0;
+      particle.vy = 0;
     }
   }
 
-  // 从核心向外“吐”一个粒子：统一直径向甩出，力量随机分布（真实物理）
-  // 力量：宽分布（0.1~1.6 均匀 + 20% 强烈喷射 2~3.2），形成明显的远近层次
-  function emitParticle(speed) {
+  // 星环引力模型（核心与自定义引力源共用）：
+  // 星环模式（ringR>0）：带内强切向公转 + 弱径向维持轨道，带外径向拉回；星环半径可调
+  // 黑洞模式（ringR=0）：纯向心引力，粒子被吸入核心
+  // sx/sy 为引力源坐标，ringR 为星环半径，gravityMult 为引力大小倍率（0~10），ramp 为引力递进系数（0~1）
+  // dir 为公转方向：'ccw' 逆时针（默认）、'cw' 顺时针、'random' 每个粒子随机
+  function applyStarRingForce(particle, sx, sy, ringR, gravityMult, ramp, p, dir) {
+    const dx = sx - particle.x;
+    const dy = sy - particle.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.01) {
+      return;
+    }
+    const nx = dx / dist;
+    const ny = dy / dist;
+
+    // 解析公转方向符号：ccw=+1，cw=-1，random=用粒子自身方向
+    let dirSign = 1;
+    if (dir === 'cw') {
+      dirSign = -1;
+    } else if (dir === 'random') {
+      dirSign = (particle.dir === undefined || particle.dir >= 0) ? 1 : -1;
+    }
+
+    // 黑洞模式：星环半径为 0，强向心引力（平方衰减，近处更猛）把粒子吸入核心
+    if (ringR <= 0) {
+      const GM = 4000 * gravityMult * ramp;
+      const accel = GM / (dist * dist + 1600);
+      particle.vx += nx * accel;
+      particle.vy += ny * accel;
+      return;
+    }
+
+    const ringWidth = 55;                 // 星环带半宽
+    const dr = dist - ringR;              // 距星环半径的偏移（正=外，负=内）
+    const inBand = Math.abs(dr) < ringWidth;
+    const falloff = Math.max(0, 1 - dist / p.gravityRadius);
+
+    if (inBand) {
+      // 星环带内：强切向公转（引力越强转越快），弱径向维持轨道
+      const pull = 0.02 * falloff * ramp;
+      const swirl = (0.6 + gravityMult * 0.4) * falloff * ramp * 1.6;
+      particle.vx += nx * pull;
+      particle.vy += ny * pull;
+      particle.vx += -ny * swirl * dirSign;
+      particle.vy += nx * swirl * dirSign;
+    } else {
+      // 带外：径向拉回星环轨道，弱切向诱导进入
+      const pull = falloff * falloff * p.gravityStrength * gravityMult * ramp;
+      const swirl = falloff * p.swirlStrength * 0.4 * ramp;
+      particle.vx += nx * pull;
+      particle.vy += ny * pull;
+      particle.vx += -ny * swirl * dirSign;
+      particle.vy += nx * swirl * dirSign;
+    }
+  }
+
+  // 从指定点向外“吐”一个粒子：统一直径向甩出，力量随机分布（真实物理）
+  // 关键：起点半径拉开、切向大幅减小、径向初速提高，避免粒子吐出后缠绕成一团
+  // origin: { x, y } 发射点（默认为当前 HUD 核心）
+  function emitParticle(speed, origin) {
+    const ox = origin ? origin.x : hud.x;
+    const oy = origin ? origin.y : hud.y;
+    // 起点：宽半径环（36 ~ 58px），让刚喷出的粒子天然分散，不挤在同一轨道
     const angle = Math.random() * Math.PI * 2;
-    const radius = HUD_CATCH_RADIUS + 4 + Math.random() * 8;
+    const radius = HUD_CATCH_RADIUS + 6 + Math.random() * 22;
     const roll = Math.random();
-    const power = roll < 0.2
-      ? 2 + Math.random() * 1.2          // 少量：强力喷射，飞得很远
-      : 0.1 + Math.random() * 1.5;       // 多数：宽范围，近/中/远自然分布
-    const radial = speed * 3.0 * power;
-    const tangential = radial * (0.55 + Math.random() * 0.35);
+    // 力量：多数中等向外（0.8~2.2），少数强力远喷射（2.6~4.2），形成明显远近层次
+    const power = roll < 0.18
+      ? 2.6 + Math.random() * 1.6        // 少量：强力喷射，飞得远
+      : 0.8 + Math.random() * 1.4;       // 多数：中/近自然分布
+    const radial = speed * 3.4 * power;  // 更高的向外初速，确保脱离核心
+    // 切向大幅减弱：只保留少量“甩丝”感，防止粒子绕核缠绕聚集
+    const dir = Math.random() < 0.5 ? 1 : -1; // 随机公转方向
+    const tangential = radial * (0.14 + Math.random() * 0.22) * dir;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
-    // 径向（向外）+ 切向（统一公转方向）
+    // 径向（向外）+ 少量切向（随机公转方向）
     const particle = {
-      x: hud.x + cos * radius,
-      y: hud.y + sin * radius,
+      x: ox + cos * radius,
+      y: oy + sin * radius,
       vx: cos * radial - sin * tangential,
-      vy: sin * radial + cos * tangential
+      vy: sin * radial + cos * tangential,
+      dir
     };
     particles.push(particle);
   }
@@ -132,7 +286,7 @@
       pushForce: 0.95 + 0.2 * k,
       linkDist: 90 + 60 * k,
       linkAlpha: 0.32 + 0.22 * k,
-      gravityRadius: 220 + 120 * k,
+      gravityRadius: 480 + 140 * k,
       gravityStrength: 0.5 + 0.25 * k,
       swirlStrength: 1.5 + 0.5 * k
     };
@@ -148,14 +302,40 @@
   }
 
   function spawn(speed) {
-    let vx = (Math.random() - 0.5) * speed * 2;
-    let vy = (Math.random() - 0.5) * speed * 2;
-    const magnitude = Math.hypot(vx, vy) || 1;
+    // 粒子投放到核心周围：
+    // - 星环模式（ringR>0）：放在星环半径轨道附近，赋予切向速度形成公转环
+    // - 黑洞模式（ringR=0）：从屏幕边缘投放，被向心引力吸向核心后吞噬
+    const ringR = cfg.ringRadius;
+    const cx = hud.active ? hud.x : width / 2;
+    const cy = hud.active ? hud.y : height / 2;
+    const angle = Math.random() * Math.PI * 2;
+
+    if (ringR <= 0) {
+      // 黑洞模式：从核心周围较近处投放，被强引力快速吸入吞噬
+      const r = 180 + Math.random() * 320;
+      return {
+        x: cx + Math.cos(angle) * r,
+        y: cy + Math.sin(angle) * r,
+        vx: 0,
+        vy: 0
+      };
+    }
+
+    // 星环模式：星环半径散布（带厚度），赋予圆形轨道切向速度自然公转
+    const r = ringR * (0.7 + Math.random() * 0.7);
+    const p = params();
+    const GM = 900 * p.gravityStrength * (cfg.gravity || 1);
+    const vOrbit = Math.sqrt(GM / Math.max(r, 20));
+    // 公转方向遵循核心源配置
+    const dir = coreDirSign();
+    const vx = -Math.sin(angle) * vOrbit * dir;
+    const vy = Math.cos(angle) * vOrbit * dir;
     return {
-      x: Math.random() * width,
-      y: Math.random() * height,
-      vx: (vx / magnitude) * speed,
-      vy: (vy / magnitude) * speed
+      x: cx + Math.cos(angle) * r,
+      y: cy + Math.sin(angle) * r,
+      vx,
+      vy,
+      dir
     };
   }
 
@@ -167,7 +347,7 @@
     }
   }
 
-  // 增量同步数量：保留已有粒子，只新增或截断，避免位置瞬移
+  // 增量同步数量：只补足核心粒子下限，不截断（发射源喷出的粒子由 MAX_PARTICLES 滚动控制）
   function syncCount() {
     // 核心停止时外面不留粒子
     if (core.mode === 'off' || core.mode === 'absorbing') {
@@ -176,9 +356,6 @@
     const { count, speed } = params();
     while (particles.length < count) {
       particles.push(spawn(speed));
-    }
-    if (particles.length > count) {
-      particles.length = count;
     }
   }
 
@@ -260,8 +437,9 @@
       const target = p.count;
       const releaseElapsed = performance.now() - (core.releaseStartedAt || 0);
       // 前 5 秒持续喷射；已经吐够数量且过了喷射期才切换回吸积模式
+      // 提高喷射速率：让粒子更迅速从核心喷散开，避免启动瞬间聚成一团
       if (particles.length < target && releaseElapsed < 5200) {
-        core.emitCarry += 0.45 + 0.15 * p.speed;
+        core.emitCarry += (0.9 + 0.4 * p.speed) + 0.5;
         while (core.emitCarry >= 1 && particles.length < target) {
           core.emitCarry -= 1;
           emitParticle(p.speed);
@@ -275,18 +453,91 @@
       }
     }
 
+    // 自定义发射源：核心运行时按固定节奏脉冲式向外喷射粒子（类似喷泉）
+    // 每隔约 260ms 喷出一个粒子；点击发射源可切换喷射开/关，无喷射数量上限
+    refreshEmitters();
+    refreshGravitySources();
+
+    // 黑洞模式：粒子被核心吞噬后，从屏幕边缘持续补充，维持粒子总量（黑洞源源不断吸入）
+    if (cfg.ringRadius <= 0 && core.mode === 'on' && hud.active) {
+      const target = p.count;
+      if (particles.length < target) {
+        particles.push(spawn(p.speed));
+      }
+    }
+
+    // 仅在核心运行/释放时喷射；停止（absorbing/off）时停止喷射，否则吸收永远清不空
+    if (emitters.length && (core.mode === 'on' || core.mode === 'releasing')) {
+      const emitSpeed = p.speed * 1.5;   // 较高初速，让喷出的粒子明显向外飞
+      const EMIT_INTERVAL = 260;         // 发射间隔（毫秒）
+      const now = performance.now();
+      for (const em of emitters) {
+        if (!em.emitting) {
+          continue;
+        }
+        if (em.nextEmitAt === undefined) {
+          // 初次错开节奏，避免多个发射源同时喷
+          em.nextEmitAt = now + Math.random() * EMIT_INTERVAL;
+          continue;
+        }
+        if (now >= em.nextEmitAt) {
+          em.nextEmitAt = now + EMIT_INTERVAL * (0.85 + Math.random() * 0.3);
+          // 全局性能保护：达到上限时移除最老粒子（FIFO），保持持续喷射而不无限增长
+          if (particles.length >= MAX_PARTICLES) {
+            particles.shift();
+          }
+          emitParticle(emitSpeed, em);
+        }
+      }
+    }
+
     for (let index = particles.length - 1; index >= 0; index -= 1) {
       const particle = particles[index];
 
-      // 鼠标排斥（水纹推开）
-      const mdx = particle.x - mouse.x;
-      const mdy = particle.y - mouse.y;
-      const mdist2 = mdx * mdx + mdy * mdy;
-      if (mdist2 < p.pushRadius * p.pushRadius && mdist2 > 0.01) {
-        const dist = Math.sqrt(mdist2);
-        const force = ((p.pushRadius - dist) / p.pushRadius) * p.pushForce;
-        particle.vx += (mdx / dist) * force;
-        particle.vy += (mdy / dist) * force;
+      // 鼠标排斥（水纹推开），可通过开关关闭
+      if (cfg.mouseRepel) {
+        const mdx = particle.x - mouse.x;
+        const mdy = particle.y - mouse.y;
+        const mdist2 = mdx * mdx + mdy * mdy;
+        if (mdist2 < p.pushRadius * p.pushRadius && mdist2 > 0.01) {
+          const dist = Math.sqrt(mdist2);
+          const force = ((p.pushRadius - dist) / p.pushRadius) * p.pushForce;
+          particle.vx += (mdx / dist) * force;
+          particle.vy += (mdy / dist) * force;
+        }
+      }
+
+      // 自定义发射源斥力：轻轻把靠近的粒子向外推开，配合喷射形成外扩喷流
+      // 仅核心运行时生效；停止/吸收时关闭
+      if (core.mode === 'on' || core.mode === 'releasing') {
+        for (const em of emitters) {
+          const edx = particle.x - em.x;   // 从发射源指向粒子的向量
+          const edy = particle.y - em.y;
+          const edist = Math.hypot(edx, edy);
+          if (edist < 90 && edist > 0.01) {
+            const enx = edx / edist;   // 向外单位向量
+            const eny = edy / edist;
+            const rFalloff = 1 - edist / 90;
+            const rForce = rFalloff * 0.6;   // 微弱斥力，只推不吸
+            particle.vx += enx * rForce;
+            particle.vy += eny * rForce;
+          }
+        }
+      }
+
+      // 自定义引力源：对附近粒子施加星环引力（向心 + 公转 + 软约束），各自有独立星环半径与引力大小
+      // 星环半径 0 = 小黑洞，纯向心吸入
+      // 仅核心运行时生效；停止/吸收时关闭，避免拉住粒子导致核心回收不完
+      if (gravitySources.length && (core.mode === 'on' || core.mode === 'releasing')) {
+        for (const gs of gravitySources) {
+          const gdx = particle.x - gs.x;
+          const gdy = particle.y - gs.y;
+          const gdist = Math.hypot(gdx, gdy);
+          const reach = p.gravityRadius * (0.5 + gs.gravity * 0.55);
+          if (gdist < reach && gdist > 0.01) {
+            applyStarRingForce(particle, gs.x, gs.y, gs.ringRadius, gs.gravity, 1, p, gs.dir);
+          }
+        }
       }
 
       if (hud.active && hud.x > -100 && hud.x < width + 100 && hud.y > -100 && hud.y < height + 100) {
@@ -316,49 +567,44 @@
         } else if (core.mode === 'releasing') {
           // 开启：粒子被统一直径向甩出（无自转），力量大小决定远近
           // 真实物理：吐出后无持续外力，初速+阻尼自然衰减，远近完全由力量决定
-          particle.vx *= 0.992;
-          particle.vy *= 0.992;
+          // 此处不再额外衰减速度（已由全局 damping 处理），避免喷射初速被压扁
         } else if (core.mode === 'on') {
-          // 引力递进：开启后 3s 无引力 → 9s 引力从 0 线性递增到全量
+          // 星环模型：向心引力 + 温和切向公转 + 径向软约束
+          // 星环半径（cfg.ringRadius）与引力大小（cfg.gravity）均可调；星环 0 = 黑洞（吞噬粒子）
           const now = performance.now();
           const inGrace = now < core.onGraceUntil;
-          const ramp = inGrace
-            ? 0
-            : Math.min(1, (now - core.onGraceUntil) / 9000);
-          if (inGrace) {
-            // 宽限期：不施加任何核心力
+          // 黑洞模式：立即全引力（跳过启动宽限/递进）；星环模式：启动后 3s 宽限 + 9s 递进
+          const ramp = cfg.ringRadius <= 0
+            ? 1
+            : (inGrace ? 0 : Math.min(1, (now - core.onGraceUntil) / 9000));
+          if (cfg.ringRadius > 0 && inGrace) {
+            // 星环模式宽限期：不施加任何核心力
           } else if (hdist < HUD_CATCH_RADIUS + p.radius) {
-            respawnParticle(particle);
-            continue;
-          } else if (hdist < p.gravityRadius) {
-            const inRing = hdist > RING_INNER && hdist < RING_OUTER;
-            const falloff = 1 - hdist / p.gravityRadius;
-            if (inRing) {
-              // 星环区：强切向、弱径向，粒子绕行成环
-              const pull = 0.02 * falloff * ramp;
-              const swirl = 1.9 * falloff * ramp;
-              particle.vx += normX * pull;
-              particle.vy += normY * pull;
-              particle.vx += -normY * swirl;
-              particle.vy += normX * swirl;
+            // 星环模式：重新投放到星环轨道继续公转；黑洞模式：吞噬粒子（真正消失）
+            if (cfg.ringRadius <= 0) {
+              particles.splice(index, 1);
             } else {
-              // 外围：缓慢吸引进入星环
-              const pull = falloff * falloff * p.gravityStrength * ramp;
-              const swirl = falloff * p.swirlStrength * 0.4 * ramp;
-              particle.vx += normX * pull;
-              particle.vy += normY * pull;
-              particle.vx += -normY * swirl;
-              particle.vy += normX * swirl;
+              respawnParticle(particle);
+            }
+            continue;
+          } else {
+            // 引力作用范围随强度扩大：强度越高覆盖越远（10 时覆盖全屏）
+            const g = cfg.gravity || 1;
+            const reach = p.gravityRadius * (0.5 + g * 0.55);
+            if (hdist < reach) {
+              applyStarRingForce(particle, hud.x, hud.y, cfg.ringRadius, g, ramp, p, cfg.coreDir || 'ccw');
             }
           }
         }
       }
 
-      const damping = core.mode === 'releasing' ? 0.995 : 0.984;
+      const damping = core.mode === 'releasing' ? 0.992 : 0.984;
       particle.vx *= damping;
       particle.vy *= damping;
       const speed = Math.hypot(particle.vx, particle.vy);
-      const maxSpeed = core.mode === 'absorbing' ? 4 : core.mode === 'releasing' ? 5 : 2.4;
+      // 速度上限固定（数值稳定保护，防速度无限增长），与引力大小无关
+      // 真实物理：引力大 → 所需轨道速度高 → 超过上限被截断 → 螺旋坠入（快速吸过来）
+      const maxSpeed = core.mode === 'absorbing' ? 4 : core.mode === 'releasing' ? 9 : 2.4;
       if (speed > maxSpeed) {
         particle.vx *= maxSpeed / speed;
         particle.vy *= maxSpeed / speed;
@@ -368,10 +614,19 @@
       }
       particle.x += particle.vx;
       particle.y += particle.vy;
-      if (particle.x < -12) particle.x = width + 12;
-      else if (particle.x > width + 12) particle.x = -12;
-      if (particle.y < -12) particle.y = height + 12;
-      else if (particle.y > height + 12) particle.y = -12;
+      if (cfg.bounce) {
+        // 边缘反弹：碰到边界反转速度，粒子留在画面内
+        if (particle.x < 0) { particle.x = 0; particle.vx = -particle.vx; }
+        else if (particle.x > width) { particle.x = width; particle.vx = -particle.vx; }
+        if (particle.y < 0) { particle.y = 0; particle.vy = -particle.vy; }
+        else if (particle.y > height) { particle.y = height; particle.vy = -particle.vy; }
+      } else {
+        // 穿墙：从另一侧穿出（循环）
+        if (particle.x < -12) particle.x = width + 12;
+        else if (particle.x > width + 12) particle.x = -12;
+        if (particle.y < -12) particle.y = height + 12;
+        else if (particle.y > height + 12) particle.y = -12;
+      }
 
       const color = transition || baseColor;
       ctx.beginPath();
@@ -403,6 +658,25 @@
     ctx.clearRect(0, 0, width, height);
   }
 
+  // 暂停/恢复：仅停止动画循环，不清空粒子与核心状态；用于窗口隐藏/恢复
+  function suspend() {
+    if (suspended) return;
+    suspended = true;
+    if (rafId) {
+      window.cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    running = false;
+  }
+
+  function resume() {
+    if (!suspended) return;
+    suspended = false;
+    if (cfg.enabled && !running && !document.hidden) {
+      start();
+    }
+  }
+
   function applyConfig(next) {
     if (typeof next.enabled === 'boolean') {
       cfg.enabled = next.enabled;
@@ -412,7 +686,7 @@
     }
     if (typeof next.speed === 'number') {
       const previous = cfg.speed;
-      cfg.speed = Math.min(2, Math.max(0.2, next.speed));
+      cfg.speed = Math.min(10, Math.max(0, next.speed));
       // 已有粒子按倍率同步缩放速度（保留方向），避免只有新粒子变快
       if (previous !== cfg.speed) {
         const ratio = cfg.speed / previous;
@@ -422,9 +696,29 @@
         }
       }
     }
+    if (typeof next.ringRadius === 'number') {
+      cfg.ringRadius = Math.min(250, Math.max(0, next.ringRadius));
+    }
+    if (typeof next.gravity === 'number') {
+      cfg.gravity = Math.min(10, Math.max(0, next.gravity));
+    }
+    if (typeof next.coreDir === 'string') {
+      cfg.coreDir = next.coreDir === 'cw' || next.coreDir === 'random' ? next.coreDir : 'ccw';
+    }
+    if (typeof next.bounce === 'boolean') {
+      cfg.bounce = next.bounce;
+    }
+    if (typeof next.mouseRepel === 'boolean') {
+      cfg.mouseRepel = next.mouseRepel;
+    }
     if (cfg.enabled) {
       syncCount();
-      start();
+      // 窗口不可见时不启动渲染循环；等 visibilitychange 恢复
+      if (!document.hidden) {
+        start();
+      } else {
+        suspended = true;
+      }
     } else {
       stop();
     }
@@ -436,8 +730,15 @@
     isEnabled: () => cfg.enabled,
     getIntensity: () => cfg.intensity,
     getSpeed: () => cfg.speed,
+    getRingRadius: () => cfg.ringRadius,
+    getGravity: () => cfg.gravity,
+    getCoreDir: () => cfg.coreDir,
+    getBounce: () => cfg.bounce,
+    getMouseRepel: () => cfg.mouseRepel,
     getMode: () => core.mode,
-    getParticles: () => particles
+    getParticles: () => particles,
+    refreshEmitters,
+    refreshGravitySources
   };
 
   window.addEventListener('resize', () => {
@@ -452,6 +753,15 @@
   window.addEventListener('pointerleave', () => {
     mouse.x = -9999;
     mouse.y = -9999;
+  });
+  // 窗口隐藏（关闭到托盘/最小化）时暂停粒子渲染，节省 GPU/内存；显示时恢复
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      suspend();
+    } else {
+      resize();
+      resume();
+    }
   });
 
   resize();
