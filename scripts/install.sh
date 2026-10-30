@@ -34,7 +34,7 @@ fi
 bash "$ROOT_DIR/scripts/install-electron.sh"
 
 echo "Installing mihomo core"
-"$ROOT_DIR/scripts/install-core.sh"
+bash "$ROOT_DIR/scripts/install-core.sh"
 chmod 0755 \
   "$ROOT_DIR/scripts/core-watchdog.sh" \
   "$ROOT_DIR/scripts/install-electron.sh" \

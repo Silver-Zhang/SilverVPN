@@ -9,7 +9,7 @@ SilverVPN 是一款面向 Linux 的开源 VPN 与代理客户端，基于 mihomo
 ## 功能特点
 
 - **Linux 桌面客户端**：基于 Electron 的图形界面，支持订阅、节点、模式与诊断管理。
-- **无图形 CLI**：支持 `svpn on`、`svpn off`、`svpn status`、`svpn import`、`svpn nodes`、`svpn use`、`svpn test` 等命令。
+- **无图形 CLI**：支持 `svpn on`、`svpn off`、`svpn status`、`svpn import`、代理组与节点切换、`svpn test` 等命令。
 - **订阅格式支持**：支持 Clash/Mihomo YAML、订阅 URL、`sub://...`、URI 列表，以及 `ss`、`ssr`、`vmess`、`trojan`、`vless`、`hysteria2`、`tuic`、`snell` 等常见节点格式。
 - **订阅方案管理**：支持查看、切换、重命名、删除订阅方案。
 - **代理模式**：支持智能代理、全局代理、直连模式。
@@ -85,11 +85,15 @@ svpn status
 管理节点和代理模式：
 
 ```bash
+svpn groups
+svpn group 2
 svpn nodes --delay
 svpn use 3
 svpn mode smart
 svpn test
 ```
+
+`svpn nodes` 和 `svpn use` 使用已选的代理组；组选择不会修改订阅规则指定的流量出口。全局模式继续使用 `GLOBAL` 组。
 
 管理绕过直连（不代理）的地址：
 

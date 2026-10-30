@@ -131,6 +131,16 @@ svpn profile delete 1 --yes
 
 ## 7. 节点与模式
 
+查看并选择代理组：
+
+```bash
+svpn groups
+svpn group 2
+svpn group '手动选择'
+```
+
+`svpn nodes` 和 `svpn use` 会使用当前选择的代理组。组选择保存在当前用户的 CLI 设置中；如果所选组已从配置移除，CLI 会回退到配置默认组。智能代理流量仍由订阅规则指定的组转发，切换这里的组不会改写规则。全局模式下仍由 `GLOBAL` 组控制节点。
+
 查看节点：
 
 ```bash
