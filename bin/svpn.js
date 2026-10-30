@@ -753,6 +753,8 @@ async function getCoreState(paths, ports) {
 function getSelectorName(paths, proxies, mode = '') {
   const items = proxies && proxies.proxies ? proxies.proxies : {};
   if (String(mode).toLowerCase() === 'global' && items.GLOBAL) return 'GLOBAL';
+  const saved = readJson(paths.settingsFile, {}).currentSelector;
+  if (getSelectableGroups(proxies).some(group => group.name === saved)) return saved;
   try {
     const config = yaml.load(readText(paths.activeConfigFile)) || {};
     const target = getProxyTarget(config);
@@ -763,6 +765,16 @@ function getSelectorName(paths, proxies, mode = '') {
   if (items.Proxy && Array.isArray(items.Proxy.all)) return 'Proxy';
   const found = Object.entries(items).find(([, value]) => Array.isArray(value.all) && value.all.length);
   return found ? found[0] : 'Proxy';
+}
+
+function getSelectableGroups(proxies) {
+  const items = proxies && proxies.proxies ? proxies.proxies : {};
+  return Object.entries(items)
+    .filter(([name, group]) => {
+      const type = String((group && group.type) || '').toLowerCase();
+      return name !== 'GLOBAL' && Array.isArray(group && group.all) && type === 'selector';
+    })
+    .map(([name, group]) => ({ name, group }));
 }
 
 function getCurrentNode(paths, proxies, mode = '') {
@@ -926,6 +938,44 @@ function proxyListFromCore(paths, proxies, mode = '') {
   return group && Array.isArray(group.all) ? group.all.filter(name => !['DIRECT', 'REJECT'].includes(name)) : [];
 }
 
+async function groups(paths, args) {
+  const ports = getPorts(paths, args);
+  const proxies = await requestCore(ports, '/proxies');
+  const selectable = getSelectableGroups(proxies);
+  if (!selectable.length) {
+    console.log('当前配置没有可手动选择的代理组。');
+    return;
+  }
+  const mode = readJson(paths.settingsFile, {}).mode || 'rule';
+  const saved = getSelectorName(paths, proxies, String(mode).toLowerCase() === 'global' ? 'rule' : mode);
+  selectable.forEach(({ name, group }, index) => {
+    const currentNode = group.now ? `  当前节点：${group.now}` : '';
+    console.log(`${name === saved ? '*' : ' '} ${String(index + 1).padStart(2, ' ')}. ${name}${currentNode}`);
+  });
+}
+
+async function selectGroup(paths, args) {
+  const input = args._.slice(1).join(' ').trim();
+  if (!input) throw new Error('用法：svpn group <组编号或名称>');
+  const ports = getPorts(paths, args);
+  const proxies = await requestCore(ports, '/proxies');
+  const selectable = getSelectableGroups(proxies);
+  let selected;
+  if (/^\d+$/.test(input)) {
+    selected = selectable[Number(input) - 1];
+  } else {
+    selected = selectable.find(({ name }) => name === input);
+  }
+  if (!selected) {
+    throw new Error(`找不到可选择的代理组：${input}。运行 svpn groups 查看可用组。`);
+  }
+  const settings = readJson(paths.settingsFile, {});
+  settings.currentSelector = selected.name;
+  if (selected.group.now) settings.currentProxy = selected.group.now;
+  writeJson(paths.settingsFile, settings);
+  console.log(`代理组已切换：${selected.name}${selected.group.now ? `（当前节点：${selected.group.now}）` : ''}`);
+}
+
 async function nodes(paths, args) {
   const ports = getPorts(paths, args);
   const proxies = await requestCore(ports, '/proxies');
@@ -966,12 +1016,7 @@ async function useNode(paths, args) {
   const selector = getSelectorName(paths, proxies, mode);
   const list = proxyListFromCore(paths, proxies, mode);
   const node = resolveNode(args._.slice(1).join(' '), list);
-  const groups = [...new Set([selector, 'GLOBAL'])];
-  for (const group of groups) {
-    if (proxies.proxies && proxies.proxies[group]) {
-      await requestCore(ports, `/proxies/${encodeURIComponent(group)}`, { method: 'PUT', body: { name: node } }).catch(() => null);
-    }
-  }
+  await requestCore(ports, `/proxies/${encodeURIComponent(selector)}`, { method: 'PUT', body: { name: node } });
   await requestCore(ports, '/connections', { method: 'DELETE' }).catch(() => null);
   const settings = readJson(paths.settingsFile, {});
   settings.currentProxy = node;
@@ -1406,7 +1451,7 @@ async function off(paths, args) {
 }
 
 function printHelp() {
-  console.log(`Usage: svpn <command>\n\nOne-click:\n  svpn on                       Start backend, terminal proxy and both VS Code Remote proxies\n  svpn off                      Stop and remove this user's proxy integrations\n  svpn status                   Human-friendly status\n\nCore commands:\n  svpn start [--proxy]          Start per-user proxy-only backend\n  svpn stop                     Stop backend\n  svpn restart [--proxy]        Restart backend\n\nProxy control:\n  svpn mode smart|global|direct Set proxy-only routing mode\n  svpn nodes [--delay]          List nodes, optionally with delays\n  svpn delay                    Alias for: svpn nodes --delay\n  svpn use <number|name>        Switch node and close old connections\n  svpn proxy on|off             Write per-user terminal proxy state\n  svpn vscode on|off            Configure Stable and Insiders Remote proxy\n  svpn bypass list|add|remove   Manage bypassed (direct) hosts\n\nSubscriptions:\n  svpn import <url|file> [name] Import and save a profile\n  svpn profile list             List subscription profiles\n  svpn profile use <number|name> Switch profile\n\nSetup:\n  svpn config ports <base-port> Set personal HTTP port base, e.g. 4880\n  svpn test                     Test IP/GitHub/Copilot/OpenAI/ChatGPT\n  svpn doctor                   Diagnose core/ports/system-proxy state\n  svpn fix                      Repair leftover system proxy settings\n\nSafety:\n  - proxy-only: no TUN, routes, DNS or /etc changes.\n  - only the current user's HOME is modified.\n  - new shells automatically load proxy state through the installed shell hook.\n`);
+  console.log(`Usage: svpn <command>\n\nOne-click:\n  svpn on                       Start backend, terminal proxy and both VS Code Remote proxies\n  svpn off                      Stop and remove this user's proxy integrations\n  svpn status                   Human-friendly status\n\nCore commands:\n  svpn start [--proxy]          Start per-user proxy-only backend\n  svpn stop                     Stop backend\n  svpn restart [--proxy]        Restart backend\n\nProxy control:\n  svpn mode smart|global|direct Set proxy-only routing mode\n  svpn groups                   List manually selectable proxy groups\n  svpn group <number|name>      Select the group used by nodes and use\n  svpn nodes [--delay]          List nodes, optionally with delays\n  svpn delay                    Alias for: svpn nodes --delay\n  svpn use <number|name>        Switch node and close old connections\n  svpn proxy on|off             Write per-user terminal proxy state\n  svpn vscode on|off            Configure Stable and Insiders Remote proxy\n  svpn bypass list|add|remove   Manage bypassed (direct) hosts\n\nSubscriptions:\n  svpn import <url|file> [name] Import and save a profile\n  svpn profile list             List subscription profiles\n  svpn profile use <number|name> Switch profile\n\nSetup:\n  svpn config ports <base-port> Set personal HTTP port base, e.g. 4880\n  svpn test                     Test IP/GitHub/Copilot/OpenAI/ChatGPT\n  svpn doctor                   Diagnose core/ports/system-proxy state\n  svpn fix                      Repair leftover system proxy settings\n\nSafety:\n  - proxy-only: no TUN, routes, DNS or /etc changes.\n  - only the current user's HOME is modified.\n  - new shells automatically load proxy state through the installed shell hook.\n`);
 }
 
 async function main() {
@@ -1427,6 +1472,8 @@ async function main() {
   if (command === 'restart') return restart(paths, args);
   if (command === 'status') return status(paths, args);
   if (command === 'mode') return setMode(paths, args);
+  if (command === 'groups') return groups(paths, args);
+  if (command === 'group') return selectGroup(paths, args);
   if (command === 'nodes') return nodes(paths, args);
   if (command === 'delay') return nodes(paths, { ...args, delay: true });
   if (command === 'use') return useNode(paths, args);

@@ -92,10 +92,18 @@ async function main() {
     'proxies:',
     '  - name: demo',
     '    type: direct',
+    '  - name: demo-alt',
+    '    type: direct',
     'proxy-groups:',
     '  - name: Proxy',
     '    type: select',
     '    proxies:',
+    '      - demo',
+    '      - demo-alt',
+    '  - name: Backup',
+    '    type: select',
+    '    proxies:',
+    '      - demo-alt',
     '      - demo',
     'rules:',
     '  - MATCH,Proxy',
@@ -146,6 +154,30 @@ async function main() {
     const reuseOutput = run(['start', '--data-dir', dataDir]);
     check('核心运行中重复 start 被识别（不重复 spawn）', /已在后台运行|复用现有核心/.test(reuseOutput), reuseOutput.trim().split('\n')[0]);
     check('mihomo 进程数未增加', mihomoCount() === before + 1, `before=${before} after=${mihomoCount()}`);
+
+    const groupsOutput = run(['groups', '--data-dir', dataDir]);
+    check('groups 列出所有手动选择组', /Proxy/.test(groupsOutput) && /Backup/.test(groupsOutput), groupsOutput.trim());
+    const selectGroupByNumber = run(['group', '2', '--data-dir', dataDir]);
+    check('可按编号切换代理组', /代理组已切换：Backup/.test(selectGroupByNumber), selectGroupByNumber.trim());
+    const selectGroupOutput = run(['group', 'Backup', '--data-dir', dataDir]);
+    check('可按名称切换代理组', /代理组已切换：Backup/.test(selectGroupOutput), selectGroupOutput.trim());
+    const nodesOutput = run(['nodes', '--data-dir', dataDir]);
+    check('nodes 使用已选择的代理组', /demo-alt/.test(nodesOutput) && /demo/.test(nodesOutput), nodesOutput.trim());
+    const useOutput = run(['use', '2', '--data-dir', dataDir]);
+    const selectedSettings = JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8'));
+    check('use 在当前组内切换节点并保存选择', /节点已切换：demo/.test(useOutput) && selectedSettings.currentSelector === 'Backup' && selectedSettings.currentProxy === 'demo', useOutput.trim());
+    const secondUseOutput = run(['use', '1', '--data-dir', dataDir]);
+    check('所选组内可切换到另一节点', /节点已切换：demo-alt/.test(secondUseOutput), secondUseOutput.trim());
+    const markedGroups = run(['groups', '--data-dir', dataDir]);
+    check('groups 标记当前组', /^\*\s+\d+\. Backup/m.test(markedGroups), markedGroups.trim());
+    const unknownGroup = spawnSync(process.execPath, [SVPN, 'group', 'Missing', '--data-dir', dataDir], { encoding: 'utf8', timeout: 60000 });
+    check('拒绝不存在的代理组', unknownGroup.status !== 0 && /找不到可选择的代理组/.test(unknownGroup.stderr), unknownGroup.stderr.trim());
+
+    const staleSettings = JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8'));
+    staleSettings.currentSelector = 'Removed';
+    fs.writeFileSync(path.join(dataDir, 'settings.json'), JSON.stringify(staleSettings, null, 2) + '\n');
+    const fallbackNodes = run(['nodes', '--data-dir', dataDir]);
+    check('已保存组失效时回退到配置默认组', /^\*\s+\d+\. demo$/m.test(fallbackNodes), fallbackNodes.trim());
 
     const bypassOutput = run(['bypass', 'add', 'verify.example.com', '--data-dir', dataDir]);
     check('bypass 热重载生效', /即时生效|已更新/.test(bypassOutput), bypassOutput.trim().split('\n')[0]);
