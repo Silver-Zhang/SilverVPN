@@ -1,6 +1,6 @@
 {
   "name": "silvervpn",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "SilverVPN Linux desktop proxy client.",
   "main": "main.js",

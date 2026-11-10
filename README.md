@@ -93,9 +93,10 @@ svpn test
 svpn traffic             # Today's per-node proxy/direct traffic
 svpn traffic 7           # Last 7 days
 svpn traffic 30 --json   # Last 30 days as JSON
+svpn traffic --details   # Target domain/IP/port breakdown
 ```
 
-`svpn traffic` reads the same persisted ledger as the desktop GUI and reports upload/download totals split by proxy node (including server address) and direct traffic. Valid ranges are `today` (default), `3`, `7`, and `30`.
+`svpn traffic` reads the same persisted ledger as the desktop GUI and reports upload/download totals split by proxy node (including server address) and direct traffic. Use `--details` to show the top proxy targets by domain/IP/port. The process that owns the running mihomo core collects the ledger, so CLI-only deployments work without starting the desktop GUI. Valid ranges are `today` (default), `3`, `7`, and `30`.
 
 Manage bypassed (direct) hosts:
 

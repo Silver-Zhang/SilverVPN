@@ -465,6 +465,143 @@ function appendLog(paths, stream, line) {
   fs.appendFileSync(assertPathInHome(path.join(paths.logsDir, stream), 'SilverVPN log'), line);
 }
 
+const TRAFFIC_RETENTION_DAYS = 31;
+const TRAFFIC_TARGETS_PER_DAY_MAX = 200;
+
+function trafficDateKey(offsetDays = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() - offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
+function pruneTrafficLedger(ledger) {
+  const dates = Object.keys(ledger.byDate || {}).sort();
+  while (dates.length > TRAFFIC_RETENTION_DAYS) {
+    const date = dates.shift();
+    delete ledger.byDate[date];
+    delete ledger.detailsByDate[date];
+  }
+}
+
+function proxyServerMap(paths) {
+  const servers = new Map();
+  try {
+    const config = yaml.load(readText(paths.runtimeConfigFile)) || {};
+    for (const proxy of Array.isArray(config.proxies) ? config.proxies : []) {
+      if (proxy && proxy.name && proxy.server) {
+        servers.set(String(proxy.name), String(proxy.server));
+      }
+    }
+  } catch (_error) {
+    // 服务地址是增强信息，读取失败不影响流量台账。
+  }
+  return servers;
+}
+
+function pruneTrafficTargets(details) {
+  const entries = Object.entries(details);
+  if (entries.length <= TRAFFIC_TARGETS_PER_DAY_MAX) {
+    return;
+  }
+  entries
+    .sort(([, left], [, right]) => ((right.up || 0) + (right.down || 0)) - ((left.up || 0) + (left.down || 0)))
+    .slice(TRAFFIC_TARGETS_PER_DAY_MAX)
+    .forEach(([key]) => delete details[key]);
+}
+
+function createTrafficSampler(paths, ports) {
+  const stored = readJson(paths.trafficStatsFile, {});
+  const ledger = {
+    byDate: stored.byDate && typeof stored.byDate === 'object' ? stored.byDate : {},
+    detailsByDate: stored.detailsByDate && typeof stored.detailsByDate === 'object' ? stored.detailsByDate : {},
+    baseline: {},
+    dirty: false,
+    lastFlush: Date.now()
+  };
+  let timer = null;
+  let inFlight = false;
+  const servers = proxyServerMap(paths);
+
+  const flush = force => {
+    if (!ledger.dirty && !force) {
+      return;
+    }
+    pruneTrafficLedger(ledger);
+    writeJson(paths.trafficStatsFile, { byDate: ledger.byDate, detailsByDate: ledger.detailsByDate });
+    ledger.dirty = false;
+    ledger.lastFlush = Date.now();
+  };
+
+  const sample = async () => {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      const value = await requestCore(ports, '/connections', { timeout: 2500 });
+      const seen = new Set();
+      const date = trafficDateKey();
+      const day = ledger.byDate[date] || (ledger.byDate[date] = {});
+      const details = ledger.detailsByDate[date] || (ledger.detailsByDate[date] = {});
+      for (const connection of Array.isArray(value.connections) ? value.connections : []) {
+        const metadata = connection.metadata || {};
+        const node = (Array.isArray(connection.chains) && connection.chains[0]) || '未知';
+        const id = String(connection.id || `${metadata.host || ''}:${metadata.destinationPort || ''}`);
+        seen.add(id);
+        const up = Number(connection.upload) || 0;
+        const down = Number(connection.download) || 0;
+        const previous = ledger.baseline[id];
+        if (previous && previous.node === node && up >= previous.up && down >= previous.down) {
+          const deltaUp = up - previous.up;
+          const deltaDown = down - previous.down;
+          const entry = day[node] || (day[node] = { up: 0, down: 0 });
+          entry.up += deltaUp;
+          entry.down += deltaDown;
+          const host = String(metadata.host || metadata.destinationIP || '未知目标');
+          const ip = String(metadata.destinationIP || '');
+          const port = String(metadata.destinationPort || '');
+          const key = `${node}\u0000${host}\u0000${ip}\u0000${port}`;
+          const detail = details[key] || (details[key] = {
+            host,
+            ip,
+            port,
+            node,
+            proxy: !/^(DIRECT|REJECT)$/i.test(node),
+            server: servers.get(node) || '',
+            up: 0,
+            down: 0,
+            lastSeen: ''
+          });
+          detail.up += deltaUp;
+          detail.down += deltaDown;
+          detail.lastSeen = new Date().toISOString();
+          ledger.dirty = true;
+        }
+        ledger.baseline[id] = { node, up, down };
+      }
+      for (const id of Object.keys(ledger.baseline)) {
+        if (!seen.has(id)) delete ledger.baseline[id];
+      }
+      pruneTrafficTargets(details);
+      if (Date.now() - ledger.lastFlush >= 60000) flush(false);
+    } catch (_error) {
+      // 核心刚启动或已停止时下一轮自动重试。
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  return {
+    start() {
+      sample();
+      timer = setInterval(sample, 2000);
+    },
+    stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+      flush(true);
+    }
+  };
+}
+
 async function daemon(paths, args) {
   const ports = getPorts(paths, args);
   const core = findCore(paths);
@@ -481,6 +618,8 @@ async function daemon(paths, args) {
     });
   }
   let shuttingDown = false;
+  const trafficSampler = createTrafficSampler(paths, ports);
+  let trafficSamplingStarted = false;
   const server = http.createServer((request, response) => {
     if (request.url === '/health') {
       response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -496,6 +635,9 @@ async function daemon(paths, args) {
   const stop = signal => {
     if (shuttingDown) return;
     shuttingDown = true;
+    if (trafficSamplingStarted) {
+      trafficSampler.stop();
+    }
     server.close();
     if (child && pidAlive(child.pid)) child.kill(signal || 'SIGTERM');
     setTimeout(() => process.exit(0), 1500).unref();
@@ -512,6 +654,11 @@ async function daemon(paths, args) {
     server.once('error', reject);
     server.listen(ports.service, '127.0.0.1', resolve);
   });
+  // 只有 CLI 自己启动的核心才负责采集；复用 GUI/其它 CLI 核心时避免重复计数。
+  if (child) {
+    trafficSampler.start();
+    trafficSamplingStarted = true;
+  }
 }
 
 async function waitForService(ports, timeoutMs = START_TIMEOUT_MS) {
@@ -809,7 +956,7 @@ async function status(paths, args) {
     if (!value) return envMode ? '环境变量模式（已启用）' : '未配置';
     const fix = '建议运行 svpn vscode on 修复';
     if (!expectedProxy) return `${value}（警告：后端未运行，网络不可用；${fix}）`;
-    if (value === expectedProxy) return `${value}（旧版遗留配置；${fix}）`;
+    if (value === expectedProxy) return `${value}（当前用户端口，配置正确）`;
     return `${value}（警告：与后端 ${expectedProxy} 不一致；${fix}）`;
   };
 
@@ -1411,6 +1558,7 @@ function traffic(paths, args) {
   const proxy = { up: 0, down: 0 };
   const direct = { up: 0, down: 0 };
   const servers = proxyServerMap(paths);
+  const detailMap = new Map();
 
   for (const date of dates) {
     for (const [name, entry] of Object.entries(byDate[date] || {})) {
@@ -1438,6 +1586,32 @@ function traffic(paths, args) {
       target.up += up;
       target.down += down;
     }
+    for (const detail of Object.values(source.detailsByDate && source.detailsByDate[date] || {})) {
+      if (!detail || detail.proxy === false) {
+        continue;
+      }
+      const host = String(detail.host || detail.ip || '未知目标');
+      const ip = String(detail.ip || '');
+      const port = String(detail.port || '');
+      const node = String(detail.node || '未知');
+      const key = `${node}\u0000${host}\u0000${ip}\u0000${port}`;
+      const item = detailMap.get(key) || {
+        host,
+        ip,
+        port,
+        node,
+        server: String(detail.server || servers.get(node) || ''),
+        up: 0,
+        down: 0,
+        lastSeen: ''
+      };
+      item.up += Number(detail.up) || 0;
+      item.down += Number(detail.down) || 0;
+      if (String(detail.lastSeen || '') > item.lastSeen) {
+        item.lastSeen = String(detail.lastSeen || '');
+      }
+      detailMap.set(key, item);
+    }
   }
 
   const rows = [...nodes.values()]
@@ -1447,7 +1621,11 @@ function traffic(paths, args) {
       if (left.proxy !== right.proxy) return left.proxy ? -1 : 1;
       return right.total - left.total;
     });
-  const result = { range: selected, dates, total, proxy, direct, nodes: rows };
+  const details = [...detailMap.values()]
+    .map(item => ({ ...item, total: item.up + item.down }))
+    .sort((left, right) => right.total - left.total)
+    .slice(0, TRAFFIC_TARGETS_PER_DAY_MAX);
+  const result = { range: selected, dates, total, proxy, direct, nodes: rows, details };
 
   if (args.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -1459,7 +1637,7 @@ function traffic(paths, args) {
   console.log(`代理流量：${formatBytes(proxy.up + proxy.down)}  ↓ ${formatBytes(proxy.down)} / ↑ ${formatBytes(proxy.up)}`);
   console.log(`直连流量：${formatBytes(direct.up + direct.down)}  ↓ ${formatBytes(direct.down)} / ↑ ${formatBytes(direct.up)}`);
   if (!rows.length) {
-    console.log('暂无台账记录；请先启动桌面版 SilverVPN 并产生流量。');
+    console.log('暂无台账记录；请先运行 svpn on 并产生流量。');
     return;
   }
   console.log('\n节点 / 服务地址：');
@@ -1469,10 +1647,24 @@ function traffic(paths, args) {
     console.log(`- [${kind}] ${row.name}${server}`);
     console.log(`  ${formatBytes(row.total)}  ↓ ${formatBytes(row.down)} / ↑ ${formatBytes(row.up)}`);
   }
+  if (args.details || details.length) {
+    console.log('\n代理目标明细：');
+    if (!details.length) {
+      console.log('暂无目标明细；新版采集器启动后才会记录域名/IP。');
+    } else {
+      for (const [index, item] of details.entries()) {
+        const endpoint = [item.ip, item.port].filter(Boolean).join(':');
+        const server = item.server ? `  节点地址：${item.server}` : '';
+        console.log(`${index + 1}. ${item.host}${endpoint ? `  ${endpoint}` : ''}`);
+        console.log(`   节点：${item.node}${server}`);
+        console.log(`   ${formatBytes(item.total)}  ↓ ${formatBytes(item.down)} / ↑ ${formatBytes(item.up)}`);
+      }
+    }
+  }
 }
 
 function printHelp() {
-  console.log(`Usage: svpn <command>\n\nOne-click:\n  svpn on                       Start backend, terminal proxy and both VS Code Remote proxies\n  svpn off                      Stop and remove this user's proxy integrations\n  svpn status                   Human-friendly status\n\nCore commands:\n  svpn start [--proxy]          Start per-user proxy-only backend\n  svpn stop                     Stop backend\n  svpn restart [--proxy]        Restart backend\n\nProxy control:\n  svpn mode smart|global|direct Set proxy-only routing mode\n  svpn nodes [--delay]          List nodes, optionally with delays\n  svpn delay                    Alias for: svpn nodes --delay\n  svpn use <number|name>        Switch node and close old connections\n  svpn traffic [today|3|7|30]   Show persisted traffic by proxy node and server\n  svpn proxy on|off             Write per-user terminal proxy state\n  svpn vscode on|off            Configure Stable and Insiders Remote proxy\n  svpn bypass list|add|remove   Manage bypassed (direct) hosts\n\nSubscriptions:\n  svpn import <url|file> [name] Import and save a profile\n  svpn profile list             List subscription profiles\n  svpn profile use <number|name> Switch profile\n\nSetup:\n  svpn config ports <base-port> Set personal HTTP port base, e.g. 4880\n  svpn test                     Test IP/GitHub/Copilot/OpenAI/ChatGPT\n  svpn doctor                   Diagnose core/ports/system-proxy state\n  svpn fix                      Repair leftover system proxy settings\n\nSafety:\n  - proxy-only: no TUN, routes, DNS or /etc changes.\n  - only the current user's HOME is modified.\n  - new shells automatically load proxy state through the installed shell hook.\n`);
+  console.log(`Usage: svpn <command>\n\nOne-click:\n  svpn on                       Start backend, terminal proxy and both VS Code Remote proxies\n  svpn off                      Stop and remove this user's proxy integrations\n  svpn status                   Human-friendly status\n\nCore commands:\n  svpn start [--proxy]          Start per-user proxy-only backend\n  svpn stop                     Stop backend\n  svpn restart [--proxy]        Restart backend\n\nProxy control:\n  svpn mode smart|global|direct Set proxy-only routing mode\n  svpn nodes [--delay]          List nodes, optionally with delays\n  svpn delay                    Alias for: svpn nodes --delay\n  svpn use <number|name>        Switch node and close old connections\n  svpn traffic [today|3|7|30]   Show persisted traffic by proxy node and server\n  svpn traffic ... --details    Also show target domain/IP/port breakdown\n  svpn proxy on|off             Write per-user terminal proxy state\n  svpn vscode on|off            Configure Stable and Insiders Remote proxy\n  svpn bypass list|add|remove   Manage bypassed (direct) hosts\n\nSubscriptions:\n  svpn import <url|file> [name] Import and save a profile\n  svpn profile list             List subscription profiles\n  svpn profile use <number|name> Switch profile\n\nSetup:\n  svpn config ports <base-port> Set personal HTTP port base, e.g. 4880\n  svpn test                     Test IP/GitHub/Copilot/OpenAI/ChatGPT\n  svpn doctor                   Diagnose core/ports/system-proxy state\n  svpn fix                      Repair leftover system proxy settings\n\nSafety:\n  - proxy-only: no TUN, routes, DNS or /etc changes.\n  - only the current user's HOME is modified.\n  - new shells automatically load proxy state through the installed shell hook.\n`);
 }
 
 async function main() {

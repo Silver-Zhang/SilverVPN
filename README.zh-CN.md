@@ -93,9 +93,10 @@ svpn test
 svpn traffic                  # 今天的节点、代理与直连流量
 svpn traffic 7                # 近 7 天
 svpn traffic 30 --json        # 近 30 天，供脚本读取
+svpn traffic --details        # 查看具体目标域名/IP/端口
 ```
 
-`svpn traffic` 与桌面 GUI 共用流量台账，按代理节点（含服务地址）和直连流量分别展示上传、下载及总量。可用时段：`today`（默认）、`3`、`7`、`30`。
+`svpn traffic` 与桌面 GUI 共用流量台账，按代理节点（含服务地址）和直连流量分别展示上传、下载及总量；加上 `--details` 可查看具体目标域名/IP/端口的流量组成。实际拥有 mihomo 核心的进程负责采集，因此只运行 CLI 时也不需要启动桌面 GUI。可用时段：`today`（默认）、`3`、`7`、`30`。
 
 管理绕过直连（不代理）的地址：
 

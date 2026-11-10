@@ -2785,7 +2785,7 @@
       return { ok: true, host: payload.host, port: payload.port, elapsedMs: 18 };
     }
     if (action === 'check-update') {
-      return { checked: true, currentVersion: '0.3.2', latestVersion: '0.3.2', available: false, dismissed: false };
+      return { checked: true, currentVersion: '0.3.3', latestVersion: '0.3.3', available: false, dismissed: false };
     }
     if (action === 'monitor-stats') {
       return {

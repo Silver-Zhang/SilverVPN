@@ -33,6 +33,14 @@ function check(label, ok, detail = '') {
   }
 }
 
+function readJson(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (_error) {
+    return fallback;
+  }
+}
+
 function run(args) {
   const result = spawnSync(process.execPath, [SVPN, ...args], { encoding: 'utf8', timeout: 60000 });
   if (result.status !== 0) {
@@ -56,6 +64,28 @@ function httpGet(port, pathname, headers = {}) {
     );
     request.on('timeout', () => request.destroy(new Error('timeout')));
     request.on('error', error => resolve({ status: 0, body: '', error: error.message }));
+  });
+}
+
+function proxyGet(port, url) {
+  return new Promise(resolve => {
+    const request = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: url,
+        method: 'GET',
+        headers: { Host: new URL(url).host },
+        timeout: 5000
+      },
+      response => {
+        response.resume();
+        response.on('end', () => resolve(response.statusCode));
+      }
+    );
+    request.on('timeout', () => request.destroy(new Error('timeout')));
+    request.on('error', () => resolve(0));
+    request.end();
   });
 }
 
@@ -164,6 +194,13 @@ async function main() {
 
     const statusJson = JSON.parse(run(['status', '--json', '--no-delay', '--data-dir', dataDir]));
     check('status --json 报告 running=true', statusJson.running === true, JSON.stringify(statusJson));
+
+    await proxyGet(PORTS.http, 'http://example.com/');
+    await new Promise(resolve => setTimeout(resolve, 65000));
+    const sampledTraffic = readJson(path.join(dataDir, 'traffic-stats.json'), { byDate: {} });
+    const sampledToday = sampledTraffic.byDate && sampledTraffic.byDate[new Date().toISOString().slice(0, 10)];
+    const sampledBytes = Object.values(sampledToday || {}).reduce((sum, item) => sum + (item.up || 0) + (item.down || 0), 0);
+    check('CLI 自启核心持续采集流量台账', sampledBytes > 0, JSON.stringify(sampledToday || {}));
 
     const trafficOutput = run(['traffic', '--data-dir', dataDir]);
     check('traffic 文本输出展示代理与直连流量', /代理流量：3\.00 KB/.test(trafficOutput) && /直连流量：384 B/.test(trafficOutput), trafficOutput);
