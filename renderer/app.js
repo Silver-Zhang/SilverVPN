@@ -121,6 +121,11 @@
       trafficTotal: '总流量',
       trafficProxyBadge: '代理',
       trafficDirectBadge: '直连',
+      trafficDetailsBtn: '查看流量组成',
+      trafficDetailsKicker: '代理流量明细',
+      trafficDetailsCloseTitle: '关闭流量明细',
+      trafficDetailsEmpty: '暂无目标明细',
+      trafficDetailsSummary: '按目标域名/IP统计，最多保留每天 200 项',
       currentNodeKicker: '当前节点',
       notCheckedYet: '尚未检测',
       silverStateOff: '未连接',
@@ -323,6 +328,11 @@
       trafficTotal: 'Total traffic',
       trafficProxyBadge: 'Proxy',
       trafficDirectBadge: 'Direct',
+      trafficDetailsBtn: 'View breakdown',
+      trafficDetailsKicker: 'Proxy traffic breakdown',
+      trafficDetailsCloseTitle: 'Close traffic details',
+      trafficDetailsEmpty: 'No target details recorded yet',
+      trafficDetailsSummary: 'Grouped by target domain/IP; up to 200 targets are retained per day',
       currentNodeKicker: 'Current node',
       notCheckedYet: 'Not checked yet',
       silverStateOff: 'Disconnected',
@@ -1411,7 +1421,39 @@
     return t('trafficD30');
   }
 
+  function renderTrafficDetails() {
+    const range = state.trafficRange || 'today';
+    const dialog = $('#trafficDetailsDialog');
+    const list = $('#trafficDetailsList');
+    if (!dialog || !list) {
+      return;
+    }
+    const details = ((state.trafficStats && state.trafficStats.details && state.trafficStats.details[range]) || [])
+      .filter(item => item.proxy !== false && Number(item.total || 0) > 0);
+    setText('#trafficDetailsTitle', `${t('trafficDetailsKicker')} · ${rangeLabel(range)}`);
+    setText('#trafficDetailsSummary', t('trafficDetailsSummary'));
+    list.innerHTML = details.length
+      ? details.map((item, index) => {
+        const target = item.host || item.ip || '-';
+        const endpoint = [item.ip, item.port].filter(Boolean).join(':');
+        return `
+          <div class="traffic-detail-row">
+            <span class="traffic-detail-rank">${index + 1}</span>
+            <div class="traffic-detail-main">
+              <span class="traffic-detail-target" title="${escapeHtml(target)}">${escapeHtml(target)}</span>
+              <span class="traffic-detail-meta">${escapeHtml(endpoint || t('trafficDetailsEmpty'))} · ${escapeHtml(item.node || '-')}</span>
+            </div>
+            <div class="traffic-detail-bytes">
+              <b>${formatBytes(item.total || 0)}</b>
+              <span>↓ ${formatBytes(item.down || 0)} / ↑ ${formatBytes(item.up || 0)}</span>
+            </div>
+          </div>`;
+      }).join('')
+      : `<div class="traffic-empty">${t('trafficDetailsEmpty')}</div>`;
+  }
+
   function renderTrafficStats(stats) {
+    state.trafficStats = stats || null;
     const range = state.trafficRange || 'today';
     const ranges = (stats && stats.ranges) || {};
     const proxyRanges = (stats && stats.proxy) || {};
@@ -2033,10 +2075,24 @@
       }
     });
     $('#refreshTrafficStats').addEventListener('click', () => loadTrafficStats());
+    $('#showTrafficDetails').addEventListener('click', () => {
+      const dialog = $('#trafficDetailsDialog');
+      if (!dialog) {
+        return;
+      }
+      renderTrafficDetails();
+      if (!dialog.open) {
+        dialog.showModal();
+      }
+    });
+    $('#closeTrafficDetails').addEventListener('click', () => $('#trafficDetailsDialog').close());
     document.querySelectorAll('#trafficRangeTabs .range-tab').forEach(button => {
       button.addEventListener('click', () => {
         state.trafficRange = button.dataset.range || 'today';
         loadTrafficStats();
+        if ($('#trafficDetailsDialog').open) {
+          renderTrafficDetails();
+        }
       });
     });
     $('#checkUpdate').addEventListener('click', () => loadUpdate(false));
@@ -2729,7 +2785,7 @@
       return { ok: true, host: payload.host, port: payload.port, elapsedMs: 18 };
     }
     if (action === 'check-update') {
-      return { checked: true, currentVersion: '0.3.1', latestVersion: '0.3.1', available: false, dismissed: false };
+      return { checked: true, currentVersion: '0.3.2', latestVersion: '0.3.2', available: false, dismissed: false };
     }
     if (action === 'monitor-stats') {
       return {
@@ -2757,6 +2813,16 @@
           d3: bytes(140 * 1024 * 1024),
           d7: bytes(330 * 1024 * 1024),
           d30: bytes(880 * 1024 * 1024)
+        },
+        details: {
+          today: [
+            { host: 'chatgpt.com', ip: '104.18.32.47', port: '443', node: '新加坡 03', proxy: true, up: 12 * 1024 * 1024, down: 38 * 1024 * 1024, total: 50 * 1024 * 1024 },
+            { host: 'api.anthropic.com', ip: '160.79.104.10', port: '443', node: '新加坡 03', proxy: true, up: 4 * 1024 * 1024, down: 20 * 1024 * 1024, total: 24 * 1024 * 1024 },
+            { host: 'api.github.com', ip: '140.82.112.6', port: '443', node: '新加坡 03', proxy: true, up: 2 * 1024 * 1024, down: 8 * 1024 * 1024, total: 10 * 1024 * 1024 }
+          ],
+          d3: [],
+          d7: [],
+          d30: []
         },
         nodes: [
           { name: '新加坡 03', server: 'sg.example.com', proxy: true, ...range() },

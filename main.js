@@ -3360,6 +3360,9 @@ let lastConnSamplingAt = 0;
 let trafficSamplingTimer = null;
 let trafficSamplingInFlight = false;
 let lastTrafficSamplingErrorAt = 0;
+let trafficProxyServerCache = { at: 0, servers: new Map() };
+const TRAFFIC_RETENTION_DAYS = 31;
+const TRAFFIC_TARGETS_PER_DAY_MAX = 200;
 
 function trafficDateKey(offsetDays = 0) {
   const date = new Date();
@@ -3372,10 +3375,47 @@ function pruneTrafficDates() {
     return;
   }
   const keys = Object.keys(trafficTracker.byDate).sort();
-  while (keys.length > 31) {
-    delete trafficTracker.byDate[keys.shift()];
+  while (keys.length > TRAFFIC_RETENTION_DAYS) {
+    const date = keys.shift();
+    delete trafficTracker.byDate[date];
+    delete trafficTracker.detailsByDate[date];
     trafficTracker.dirty = true;
   }
+}
+
+function pruneTrafficTargets(date) {
+  const details = trafficTracker && trafficTracker.detailsByDate[date];
+  if (!details) {
+    return;
+  }
+  const entries = Object.entries(details);
+  if (entries.length <= TRAFFIC_TARGETS_PER_DAY_MAX) {
+    return;
+  }
+  entries
+    .sort(([, left], [, right]) => ((right.up || 0) + (right.down || 0)) - ((left.up || 0) + (left.down || 0)))
+    .slice(TRAFFIC_TARGETS_PER_DAY_MAX)
+    .forEach(([key]) => delete details[key]);
+  trafficTracker.dirty = true;
+}
+
+function trafficProxyServers() {
+  if (Date.now() - trafficProxyServerCache.at < 60000 && trafficProxyServerCache.servers.size) {
+    return trafficProxyServerCache.servers;
+  }
+  const servers = new Map();
+  try {
+    const document = yaml.load(fs.readFileSync(runtime.runtimeConfigFile, 'utf8')) || {};
+    for (const proxy of Array.isArray(document.proxies) ? document.proxies : []) {
+      if (proxy && proxy.name && proxy.server) {
+        servers.set(String(proxy.name), String(proxy.server));
+      }
+    }
+  } catch (_error) {
+    // 节点名仍可用，服务地址仅作为明细增强信息。
+  }
+  trafficProxyServerCache = { at: Date.now(), servers };
+  return servers;
 }
 
 function initTrafficTracker() {
@@ -3384,6 +3424,7 @@ function initTrafficTracker() {
   trafficTracker = {
     file,
     byDate: data.byDate && typeof data.byDate === 'object' ? data.byDate : {},
+    detailsByDate: data.detailsByDate && typeof data.detailsByDate === 'object' ? data.detailsByDate : {},
     connBaseline: {},
     lastFlush: Date.now(),
     dirty: false
@@ -3396,7 +3437,10 @@ function flushTrafficStats(force = false) {
     return;
   }
   pruneTrafficDates();
-  writeJson(trafficTracker.file, { byDate: trafficTracker.byDate });
+  writeJson(trafficTracker.file, {
+    byDate: trafficTracker.byDate,
+    detailsByDate: trafficTracker.detailsByDate
+  });
   trafficTracker.dirty = false;
   trafficTracker.lastFlush = Date.now();
 }
@@ -3416,9 +3460,12 @@ async function accumulateTrafficConnections() {
     const seen = new Set();
     const date = trafficDateKey(0);
     const day = trafficTracker.byDate[date] || (trafficTracker.byDate[date] = {});
+    const details = trafficTracker.detailsByDate[date] || (trafficTracker.detailsByDate[date] = {});
+    const proxyServers = trafficProxyServers();
     for (const conn of connections) {
       const node = (Array.isArray(conn.chains) && conn.chains[0]) || '未知';
-      const id = String(conn.id || `${conn.metadata && conn.metadata.host || ''}:${conn.metadata && conn.metadata.destinationPort || ''}`);
+      const metadata = conn.metadata || {};
+      const id = String(conn.id || `${metadata.host || ''}:${metadata.destinationPort || ''}`);
       seen.add(id);
       const up = Number(conn.upload) || 0;
       const down = Number(conn.download) || 0;
@@ -3426,8 +3473,28 @@ async function accumulateTrafficConnections() {
       if (prev && prev.node === node) {
         if (up >= prev.up && down >= prev.down) {
           const entry = day[node] || (day[node] = { up: 0, down: 0 });
-          entry.up += up - prev.up;
-          entry.down += down - prev.down;
+          const deltaUp = up - prev.up;
+          const deltaDown = down - prev.down;
+          entry.up += deltaUp;
+          entry.down += deltaDown;
+          const host = String(metadata.host || metadata.destinationIP || '未知目标');
+          const ip = String(metadata.destinationIP || '');
+          const port = String(metadata.destinationPort || '');
+          const detailKey = `${node}\u0000${host}\u0000${ip}\u0000${port}`;
+          const detail = details[detailKey] || (details[detailKey] = {
+            host,
+            ip,
+            port,
+            node,
+            proxy: !/^(DIRECT|REJECT)$/i.test(node),
+            server: proxyServers.get(node) || '',
+            up: 0,
+            down: 0,
+            lastSeen: ''
+          });
+          detail.up += deltaUp;
+          detail.down += deltaDown;
+          detail.lastSeen = new Date().toISOString();
           trafficTracker.dirty = true;
         }
       }
@@ -3448,6 +3515,7 @@ async function accumulateTrafficConnections() {
     }
     // 节点列表按当日已记账的节点为准，遍历所有日期以便跨天补录。
     pruneTrafficDates();
+    pruneTrafficTargets(date);
     if (Date.now() - trafficTracker.lastFlush > 60000) {
       flushTrafficStats();
     }
@@ -3498,9 +3566,13 @@ function sumTrafficWindow(dayEntry, windows) {
 function getTrafficStats() {
   const empty = () => ({ up: 0, down: 0 });
   if (!trafficTracker) {
-    return { ranges: { today: empty(), d3: empty(), d7: empty(), d30: empty() }, nodes: [] };
+    return {
+      ranges: { today: empty(), d3: empty(), d7: empty(), d30: empty() },
+      proxy: { today: empty(), d3: empty(), d7: empty(), d30: empty() },
+      nodes: [],
+      details: { today: [], d3: [], d7: [], d30: [] }
+    };
   }
-  const todayKey = trafficDateKey(0);
   const windows = {
     today: [trafficDateKey(0)],
     d3: [0, 1, 2].map(trafficDateKey),
@@ -3508,13 +3580,28 @@ function getTrafficStats() {
     d30: Array.from({ length: 30 }, (_, index) => trafficDateKey(index))
   };
   const nodesMap = {};
+  const nodeInfo = new Map();
   const knownNodes = new Set();
   for (const date of windows.d30) {
     Object.keys(trafficTracker.byDate[date] || {}).forEach(node => knownNodes.add(node));
+    for (const detail of Object.values(trafficTracker.detailsByDate[date] || {})) {
+      if (detail && detail.node && !nodeInfo.has(detail.node)) {
+        nodeInfo.set(detail.node, {
+          proxy: detail.proxy !== false,
+          server: String(detail.server || '')
+        });
+      }
+    }
   }
   for (const node of knownNodes) {
     if (node === '__total__') continue;
-    const entry = nodesMap[node] || (nodesMap[node] = { today: empty(), d3: empty(), d7: empty(), d30: empty() });
+    const info = nodeInfo.get(node) || {
+      proxy: !/^(DIRECT|REJECT)$/i.test(node),
+      server: ''
+    };
+    const entry = nodesMap[node] || (nodesMap[node] = {
+      today: empty(), d3: empty(), d7: empty(), d30: empty(), ...info
+    });
     entry.today = sumTrafficWindow(node, windows.today);
     entry.d3 = sumTrafficWindow(node, windows.d3);
     entry.d7 = sumTrafficWindow(node, windows.d7);
@@ -3524,18 +3611,54 @@ function getTrafficStats() {
     .map(([name, value]) => ({ name, ...value }))
     .sort((left, right) => (right.d30.up + right.d30.down) - (left.d30.up + left.d30.down));
   const ranges = {};
+  const proxy = {};
+  const details = {};
   for (const key of Object.keys(windows)) {
     const total = empty();
+    const proxyTotal = empty();
+    const detailMap = new Map();
     for (const date of windows[key]) {
       const day = trafficTracker.byDate[date] || {};
-      for (const value of Object.values(day)) {
+      for (const [name, value] of Object.entries(day)) {
         total.up += Number(value.up) || 0;
         total.down += Number(value.down) || 0;
+        if (!/^(DIRECT|REJECT)$/i.test(name)) {
+          proxyTotal.up += Number(value.up) || 0;
+          proxyTotal.down += Number(value.down) || 0;
+        }
+      }
+      for (const detail of Object.values(trafficTracker.detailsByDate[date] || {})) {
+        const host = String(detail.host || detail.ip || '未知目标');
+        const ip = String(detail.ip || '');
+        const port = String(detail.port || '');
+        const node = String(detail.node || '未知');
+        const detailKey = `${node}\u0000${host}\u0000${ip}\u0000${port}`;
+        const item = detailMap.get(detailKey) || {
+          host,
+          ip,
+          port,
+          node,
+          proxy: detail.proxy !== false,
+          up: 0,
+          down: 0,
+          lastSeen: ''
+        };
+        item.up += Number(detail.up) || 0;
+        item.down += Number(detail.down) || 0;
+        if (String(detail.lastSeen || '') > item.lastSeen) {
+          item.lastSeen = String(detail.lastSeen || '');
+        }
+        detailMap.set(detailKey, item);
       }
     }
     ranges[key] = total;
+    proxy[key] = proxyTotal;
+    details[key] = [...detailMap.values()]
+      .map(item => ({ ...item, total: item.up + item.down }))
+      .sort((left, right) => right.total - left.total)
+      .slice(0, TRAFFIC_TARGETS_PER_DAY_MAX);
   }
-  return { ranges, nodes };
+  return { ranges, proxy, nodes, details };
 }
 
 async function monitorStatsFromGui() {

@@ -275,6 +275,7 @@
               <span class="kpi-label" data-i18n="trafficProxy">代理流量</span>
               <span id="tProxy" class="t-value">0 B</span>
               <span class="t-sub" id="tProxySub">↓ 0 B / ↑ 0 B</span>
+              <button id="showTrafficDetails" class="traffic-detail-button" type="button" data-i18n="trafficDetailsBtn">查看流量组成</button>
             </div>
             <div class="t-stat">
               <span class="kpi-label" data-i18n="trafficTotal">总流量</span>
@@ -287,6 +288,18 @@
           </div>
           </div>
         </section>
+
+        <dialog id="trafficDetailsDialog" class="traffic-details-dialog">
+          <div class="traffic-details-head">
+            <div>
+              <p class="traffic-details-kicker" data-i18n="trafficDetailsKicker">代理流量明细</p>
+              <h2 id="trafficDetailsTitle">流量组成</h2>
+              <p id="trafficDetailsSummary" class="traffic-details-summary">-</p>
+            </div>
+            <button id="closeTrafficDetails" class="icon-button" type="button" aria-label="关闭" data-i18n-title="trafficDetailsCloseTitle">×</button>
+          </div>
+          <div id="trafficDetailsList" class="traffic-details-list"></div>
+        </dialog>
 
         <section class="panel node-surface span-7" aria-label="节点列表">
           <div class="panel-title-row">
