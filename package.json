@@ -1,6 +1,6 @@
 {
   "name": "silvervpn",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "SilverVPN Linux desktop proxy client.",
   "main": "main.js",
@@ -18,8 +18,9 @@
     "start": "electron .",
     "install:desktop": "./scripts/install.sh",
     "update:desktop": "./scripts/update.sh",
-    "check": "node --check cli.js && node --check bin/svpn.js && node --check bin/svpn-import.js && node --check bin/svpn-profile.js && bash -n bin/svpn && node --check main.js && node --check preload.js && node --check renderer/app.js && node --check scripts/verify.js",
-    "pack": "electron-builder --linux AppImage deb"
+    "check": "node scripts/lint-undefined.js && node --check cli.js && node --check bin/svpn.js && node --check bin/svpn-import.js && node --check bin/svpn-profile.js && bash -n bin/svpn && node --check main.js && node --check preload.js && node --check renderer/app.js && node --check scripts/verify.js",
+    "pack": "electron-builder --linux AppImage deb",
+    "check:syntax": "node --check cli.js && node --check bin/svpn.js && node --check bin/svpn-import.js && node --check bin/svpn-profile.js && bash -n bin/svpn && node --check main.js && node --check preload.js && node --check renderer/app.js && node --check scripts/verify.js"
   },
   "dependencies": {
     "js-yaml": "4.1.0"

@@ -9,6 +9,14 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync, execSync } = require('child_process');
 const yaml = require('js-yaml');
+const { portsFromBase } = require('../lib/ports');
+const {
+  DEFAULT_BYPASS_HOSTS,
+  normalizeBypassHosts,
+  getDirectRules,
+  getRejectRules,
+  getProxyRoutingRules
+} = require('../lib/routing-rules');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_DELAY_URL = 'https://www.gstatic.com/generate_204';
@@ -33,33 +41,6 @@ const MODE_LABELS = {
   direct: '直连模式',
   Direct: '直连模式'
 };
-const DEFAULT_BYPASS_HOSTS = [
-  'localhost',
-  '127.0.0.0/8',
-  '::1',
-  '10.0.0.0/8',
-  '172.16.0.0/12',
-  '192.168.0.0/16',
-  '169.254.0.0/16',
-  'gitlab.reallab.org.cn',
-  '*.reallab.org.cn',
-  '*.local'
-];
-const ALWAYS_PROXY_RULES = [
-  'DOMAIN-SUFFIX,claude.ai,Proxy',
-  'DOMAIN-SUFFIX,anthropic.com,Proxy',
-  'DOMAIN-SUFFIX,claudeusercontent.com,Proxy',
-  'DOMAIN,platform.claude.com,Proxy',
-  'DOMAIN,downloads.claude.ai,Proxy',
-  'DOMAIN-SUFFIX,openai.com,Proxy',
-  'DOMAIN-SUFFIX,chatgpt.com,Proxy',
-  'DOMAIN-SUFFIX,github.com,Proxy',
-  'DOMAIN-SUFFIX,githubusercontent.com,Proxy',
-  'DOMAIN-SUFFIX,githubcopilot.com,Proxy',
-  'DOMAIN,copilot-proxy.githubusercontent.com,Proxy'
-];
-const ALWAYS_DIRECT_RULES = ['GEOIP,CN,DIRECT'];
-
 function parseArgs(argv) {
   const args = { _: [] };
   for (let index = 0; index < argv.length; index += 1) {
@@ -176,6 +157,7 @@ function getPaths(args = {}) {
     shellHookFile: path.join(dataDir, 'shell-hook.sh'),
     subscriptionsDir: path.join(dataDir, 'subscriptions'),
     subscriptionsFile: path.join(dataDir, 'clashy-configs', 'subscriptions.json'),
+    trafficStatsFile: path.join(dataDir, 'traffic-stats.json'),
     activeConfigFile: path.join(dataDir, 'clash-configs', 'config.yaml'),
     runtimeConfigFile: path.join(dataDir, 'clash-runtime', 'config.yaml'),
     defaultMmdbFile: path.join(resources, 'clash-configs', 'Country.mmdb')
@@ -184,21 +166,13 @@ function getPaths(args = {}) {
 
 function normalizePort(value) {
   const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  // 端口组要占用 base..base+10，超出范围会让 core 端口非法
+  if (!Number.isInteger(port) || port < 1024 || port + 10 > 65535) {
     throw new Error(`Invalid port: ${value}`);
   }
   return port;
 }
 
-function portsFromBase(base) {
-  if (base + 10 > 65535) throw new Error(`Invalid port base: ${base}`);
-  return {
-    http: base,
-    socks: base + 1,
-    service: base + 8,
-    core: base + 10
-  };
-}
 
 function listListeningPorts() {
   try {
@@ -427,37 +401,6 @@ async function resolveCoreReuse(ports) {
   return coreProbe(ports);
 }
 
-function normalizeBypassHosts(values) {
-  const source = Array.isArray(values) ? values : String(values || '').split(/\r?\n/);
-  const out = [];
-  const seen = new Set();
-  for (const item of source) {
-    const value = String(item || '').trim();
-    if (!value || value.startsWith('#') || seen.has(value)) continue;
-    out.push(value);
-    seen.add(value);
-  }
-  return out;
-}
-
-function bypassHostToDirectRule(host) {
-  if (host === 'localhost') return 'DOMAIN,localhost,DIRECT';
-  if (host === '::1') return 'IP-CIDR6,::1/128,DIRECT,no-resolve';
-  if (/^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/.test(host)) return `IP-CIDR,${host},DIRECT,no-resolve`;
-  if (/^[0-9a-f:]+\/\d{1,3}$/i.test(host)) return `IP-CIDR6,${host},DIRECT,no-resolve`;
-  if (host.startsWith('*.')) return `DOMAIN-SUFFIX,${host.slice(2)},DIRECT`;
-  if (host.startsWith('.')) return `DOMAIN-SUFFIX,${host.slice(1)},DIRECT`;
-  if (/^[a-z0-9.-]+$/i.test(host)) return `DOMAIN,${host},DIRECT`;
-  return '';
-}
-
-function getDirectRules(settings = {}) {
-  return normalizeBypassHosts([
-    ...normalizeBypassHosts([...DEFAULT_BYPASS_HOSTS, ...(settings.bypassHosts || [])]).map(bypassHostToDirectRule),
-    ...ALWAYS_DIRECT_RULES
-  ]).filter(Boolean);
-}
-
 function getProxyTarget(config) {
   const groups = Array.isArray(config['proxy-groups'])
     ? config['proxy-groups']
@@ -474,7 +417,8 @@ function getProxyTarget(config) {
 function ensureRoutingRules(config, settings) {
   const proxyTarget = getProxyTarget(config);
   const desired = [
-    ...ALWAYS_PROXY_RULES.map(rule => rule.replace(/,Proxy$/, `,${proxyTarget}`)),
+    ...getRejectRules(),
+    ...getProxyRoutingRules(proxyTarget),
     ...getDirectRules(settings)
   ];
   const existing = Array.isArray(config.rules) ? config.rules.map(String) : [];
@@ -1405,8 +1349,130 @@ async function off(paths, args) {
   console.log('SilverVPN 一键关闭完成。');
 }
 
+function trafficDateKey(offsetDays = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() - offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatBytes(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let amount = bytes;
+  let index = 0;
+  while (amount >= 1024 && index < units.length - 1) {
+    amount /= 1024;
+    index += 1;
+  }
+  return `${amount.toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
+}
+
+function trafficRange(input) {
+  const value = String(input || 'today').trim().toLowerCase();
+  const ranges = {
+    today: { days: 1, label: '今天' },
+    '1': { days: 1, label: '今天' },
+    d3: { days: 3, label: '近 3 天' },
+    '3': { days: 3, label: '近 3 天' },
+    d7: { days: 7, label: '近 7 天' },
+    '7': { days: 7, label: '近 7 天' },
+    d30: { days: 30, label: '近 30 天' },
+    '30': { days: 30, label: '近 30 天' }
+  };
+  const selected = ranges[value];
+  if (!selected) {
+    throw new Error('用法：svpn traffic [today|3|7|30] [--json]');
+  }
+  return selected;
+}
+
+function proxyServerMap(paths) {
+  const servers = new Map();
+  try {
+    const config = yaml.load(readText(paths.activeConfigFile)) || {};
+    for (const item of Array.isArray(config.proxies) ? config.proxies : []) {
+      if (item && item.name && item.server) {
+        servers.set(String(item.name), String(item.server));
+      }
+    }
+  } catch (_error) {
+    // 台账仍可展示节点名，服务地址仅作为增强信息。
+  }
+  return servers;
+}
+
+function traffic(paths, args) {
+  const selected = trafficRange(args._[1]);
+  const source = readJson(paths.trafficStatsFile, { byDate: {} });
+  const byDate = source.byDate && typeof source.byDate === 'object' ? source.byDate : {};
+  const dates = Array.from({ length: selected.days }, (_, index) => trafficDateKey(index));
+  const nodes = new Map();
+  const total = { up: 0, down: 0 };
+  const proxy = { up: 0, down: 0 };
+  const direct = { up: 0, down: 0 };
+  const servers = proxyServerMap(paths);
+
+  for (const date of dates) {
+    for (const [name, entry] of Object.entries(byDate[date] || {})) {
+      if (name === '__proxy__' || name === '__total__') {
+        continue;
+      }
+      const up = Number(entry && entry.up) || 0;
+      const down = Number(entry && entry.down) || 0;
+      const isProxy = entry && typeof entry.proxy === 'boolean'
+        ? entry.proxy
+        : !/^(DIRECT|REJECT)$/i.test(name);
+      const node = nodes.get(name) || {
+        name,
+        server: entry && entry.server ? String(entry.server) : servers.get(name) || '',
+        proxy: isProxy,
+        up: 0,
+        down: 0
+      };
+      node.up += up;
+      node.down += down;
+      nodes.set(name, node);
+      total.up += up;
+      total.down += down;
+      const target = isProxy ? proxy : direct;
+      target.up += up;
+      target.down += down;
+    }
+  }
+
+  const rows = [...nodes.values()]
+    .map(node => ({ ...node, total: node.up + node.down }))
+    .filter(node => node.total > 0)
+    .sort((left, right) => {
+      if (left.proxy !== right.proxy) return left.proxy ? -1 : 1;
+      return right.total - left.total;
+    });
+  const result = { range: selected, dates, total, proxy, direct, nodes: rows };
+
+  if (args.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  console.log(`流量统计（${selected.label}：${dates[dates.length - 1]} 至 ${dates[0]}）`);
+  console.log(`总流量：${formatBytes(total.up + total.down)}  ↓ ${formatBytes(total.down)} / ↑ ${formatBytes(total.up)}`);
+  console.log(`代理流量：${formatBytes(proxy.up + proxy.down)}  ↓ ${formatBytes(proxy.down)} / ↑ ${formatBytes(proxy.up)}`);
+  console.log(`直连流量：${formatBytes(direct.up + direct.down)}  ↓ ${formatBytes(direct.down)} / ↑ ${formatBytes(direct.up)}`);
+  if (!rows.length) {
+    console.log('暂无台账记录；请先启动桌面版 SilverVPN 并产生流量。');
+    return;
+  }
+  console.log('\n节点 / 服务地址：');
+  for (const row of rows) {
+    const kind = row.proxy ? '代理' : '直连';
+    const server = row.server ? `  ${row.server}` : '';
+    console.log(`- [${kind}] ${row.name}${server}`);
+    console.log(`  ${formatBytes(row.total)}  ↓ ${formatBytes(row.down)} / ↑ ${formatBytes(row.up)}`);
+  }
+}
+
 function printHelp() {
-  console.log(`Usage: svpn <command>\n\nOne-click:\n  svpn on                       Start backend, terminal proxy and both VS Code Remote proxies\n  svpn off                      Stop and remove this user's proxy integrations\n  svpn status                   Human-friendly status\n\nCore commands:\n  svpn start [--proxy]          Start per-user proxy-only backend\n  svpn stop                     Stop backend\n  svpn restart [--proxy]        Restart backend\n\nProxy control:\n  svpn mode smart|global|direct Set proxy-only routing mode\n  svpn nodes [--delay]          List nodes, optionally with delays\n  svpn delay                    Alias for: svpn nodes --delay\n  svpn use <number|name>        Switch node and close old connections\n  svpn proxy on|off             Write per-user terminal proxy state\n  svpn vscode on|off            Configure Stable and Insiders Remote proxy\n  svpn bypass list|add|remove   Manage bypassed (direct) hosts\n\nSubscriptions:\n  svpn import <url|file> [name] Import and save a profile\n  svpn profile list             List subscription profiles\n  svpn profile use <number|name> Switch profile\n\nSetup:\n  svpn config ports <base-port> Set personal HTTP port base, e.g. 4880\n  svpn test                     Test IP/GitHub/Copilot/OpenAI/ChatGPT\n  svpn doctor                   Diagnose core/ports/system-proxy state\n  svpn fix                      Repair leftover system proxy settings\n\nSafety:\n  - proxy-only: no TUN, routes, DNS or /etc changes.\n  - only the current user's HOME is modified.\n  - new shells automatically load proxy state through the installed shell hook.\n`);
+  console.log(`Usage: svpn <command>\n\nOne-click:\n  svpn on                       Start backend, terminal proxy and both VS Code Remote proxies\n  svpn off                      Stop and remove this user's proxy integrations\n  svpn status                   Human-friendly status\n\nCore commands:\n  svpn start [--proxy]          Start per-user proxy-only backend\n  svpn stop                     Stop backend\n  svpn restart [--proxy]        Restart backend\n\nProxy control:\n  svpn mode smart|global|direct Set proxy-only routing mode\n  svpn nodes [--delay]          List nodes, optionally with delays\n  svpn delay                    Alias for: svpn nodes --delay\n  svpn use <number|name>        Switch node and close old connections\n  svpn traffic [today|3|7|30]   Show persisted traffic by proxy node and server\n  svpn proxy on|off             Write per-user terminal proxy state\n  svpn vscode on|off            Configure Stable and Insiders Remote proxy\n  svpn bypass list|add|remove   Manage bypassed (direct) hosts\n\nSubscriptions:\n  svpn import <url|file> [name] Import and save a profile\n  svpn profile list             List subscription profiles\n  svpn profile use <number|name> Switch profile\n\nSetup:\n  svpn config ports <base-port> Set personal HTTP port base, e.g. 4880\n  svpn test                     Test IP/GitHub/Copilot/OpenAI/ChatGPT\n  svpn doctor                   Diagnose core/ports/system-proxy state\n  svpn fix                      Repair leftover system proxy settings\n\nSafety:\n  - proxy-only: no TUN, routes, DNS or /etc changes.\n  - only the current user's HOME is modified.\n  - new shells automatically load proxy state through the installed shell hook.\n`);
 }
 
 async function main() {
@@ -1430,6 +1496,7 @@ async function main() {
   if (command === 'nodes') return nodes(paths, args);
   if (command === 'delay') return nodes(paths, { ...args, delay: true });
   if (command === 'use') return useNode(paths, args);
+  if (command === 'traffic') return traffic(paths, args);
   if (command === 'proxy') return proxy(paths, args);
   if (command === 'vscode') return vscode(paths, args);
   if (command === 'bypass') return bypass(paths, args);

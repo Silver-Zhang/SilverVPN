@@ -9,6 +9,13 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { URL } = require('url');
+const {
+  DEFAULT_BYPASS_HOSTS,
+  normalizeBypassHosts,
+  getDirectRules,
+  getRejectRules,
+  getProxyRoutingRules
+} = require('./lib/routing-rules');
 
 const DEFAULT_PORT = 4788;
 const DEFAULT_CORE_PORT = 4790;
@@ -41,35 +48,6 @@ const MODE_ALIASES = {
   global: 'global',
   direct: 'direct'
 };
-const DEFAULT_BYPASS_HOSTS = [
-  'localhost',
-  '127.0.0.0/8',
-  '::1',
-  '10.0.0.0/8',
-  '172.16.0.0/12',
-  '192.168.0.0/16',
-  '169.254.0.0/16',
-  'gitlab.reallab.org.cn',
-  '*.reallab.org.cn',
-  '*.local'
-];
-const ALWAYS_PROXY_RULES = [
-  'DOMAIN-SUFFIX,claude.ai,Proxy',
-  'DOMAIN-SUFFIX,anthropic.com,Proxy',
-  'DOMAIN-SUFFIX,claudeusercontent.com,Proxy',
-  'DOMAIN,platform.claude.com,Proxy',
-  'DOMAIN,downloads.claude.ai,Proxy',
-  'DOMAIN-SUFFIX,openai.com,Proxy',
-  'DOMAIN-SUFFIX,chatgpt.com,Proxy',
-  'DOMAIN-SUFFIX,google.com,Proxy',
-  'DOMAIN-SUFFIX,googleapis.com,Proxy',
-  'DOMAIN-SUFFIX,gstatic.com,Proxy',
-  'DOMAIN,storage.googleapis.com,Proxy',
-  'DOMAIN-SUFFIX,github.com,Proxy',
-  'DOMAIN-SUFFIX,githubusercontent.com,Proxy'
-];
-const ALWAYS_DIRECT_RULES = ['GEOIP,CN,DIRECT'];
-
 function parseArgs(argv) {
   const args = { _: [] };
   for (let index = 0; index < argv.length; index += 1) {
@@ -108,53 +86,6 @@ function copyDirectory(source, target, overwrite = false) {
       fs.copyFileSync(from, to);
     }
   }
-}
-
-function normalizeBypassHosts(values) {
-  const source = Array.isArray(values) ? values : String(values || '').split(/\r?\n/);
-  const cleaned = [];
-  const seen = new Set();
-  for (const item of source) {
-    const value = String(item || '').trim();
-    if (!value || value.startsWith('#') || seen.has(value)) {
-      continue;
-    }
-    cleaned.push(value);
-    seen.add(value);
-  }
-  return cleaned;
-}
-
-function bypassHostToDirectRule(host) {
-  if (host === 'localhost') {
-    return 'DOMAIN,localhost,DIRECT';
-  }
-  if (host === '::1') {
-    return 'IP-CIDR6,::1/128,DIRECT,no-resolve';
-  }
-  if (/^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/.test(host)) {
-    return `IP-CIDR,${host},DIRECT,no-resolve`;
-  }
-  if (/^[0-9a-f:]+\/\d{1,3}$/i.test(host)) {
-    return `IP-CIDR6,${host},DIRECT,no-resolve`;
-  }
-  if (host.startsWith('*.')) {
-    return `DOMAIN-SUFFIX,${host.slice(2)},DIRECT`;
-  }
-  if (host.startsWith('.')) {
-    return `DOMAIN-SUFFIX,${host.slice(1)},DIRECT`;
-  }
-  if (/^[a-z0-9.-]+$/i.test(host)) {
-    return `DOMAIN,${host},DIRECT`;
-  }
-  return '';
-}
-
-function getDirectRules(settings = {}) {
-  return normalizeBypassHosts([
-    ...normalizeBypassHosts([...DEFAULT_BYPASS_HOSTS, ...(settings.bypassHosts || [])]).map(bypassHostToDirectRule),
-    ...ALWAYS_DIRECT_RULES
-  ]);
 }
 
 function readText(file, fallback = '') {
@@ -835,7 +766,7 @@ function buildClashYamlFromProxies(proxies, settings = {}) {
         proxies: [...names, 'DIRECT']
       }
     ],
-    rules: [...getDirectRules(settings), 'MATCH,Proxy']
+    rules: [...getRejectRules(), ...getDirectRules(settings), 'MATCH,Proxy']
   });
 }
 
@@ -1477,8 +1408,8 @@ function ensureDirectRules(sourceText, settings = {}) {
   }
   const lines = sourceText.split(/\r?\n/);
   const rulesIndex = lines.findIndex(line => /^rules:\s*$/.test(line));
-  const proxyRules = ALWAYS_PROXY_RULES.map(rule => rule.replace(/,Proxy$/, `,${proxyTarget}`));
-  const routingRules = [...proxyRules, ...getDirectRules(settings)];
+  const proxyRules = getProxyRoutingRules(proxyTarget);
+  const routingRules = [...getRejectRules(), ...proxyRules, ...getDirectRules(settings)];
 
   if (rulesIndex === -1) {
     const rules = [...routingRules, `MATCH,${proxyTarget}`].map(rule => `  - ${rule}`);

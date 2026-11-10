@@ -2323,9 +2323,41 @@ textarea:focus-visible {
 }
 
 /* Traffic stats */
-.traffic-overview {
+.traffic-range-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.range-tab {
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.range-tab:hover {
+  color: var(--text);
+}
+
+.range-tab.is-active {
+  background: var(--surface-2);
+  color: var(--blue-bright);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.16);
+}
+
+.traffic-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 14px;
 }
@@ -2341,6 +2373,17 @@ textarea:focus-visible {
   background: var(--surface-2);
   position: relative;
   overflow: hidden;
+}
+
+.t-stat-primary {
+  border-color: var(--line-strong);
+}
+
+.t-sub {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .t-stat::after {
@@ -2444,9 +2487,49 @@ textarea:focus-visible {
   transition: width 500ms ease;
 }
 
+.tc-badge {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.tc-badge-proxy {
+  background: rgba(59, 130, 246, 0.16);
+  color: var(--blue-bright);
+}
+
+.tc-meta {
+  margin: -4px 0 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.tc-ip {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-card.is-proxy .tc-track i {
+  background: linear-gradient(90deg, var(--violet), var(--blue));
+}
+
+.traffic-card.is-direct {
+  opacity: 0.82;
+}
+
 .tc-cells {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 
@@ -2607,7 +2690,7 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .traffic-overview {
+  .traffic-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

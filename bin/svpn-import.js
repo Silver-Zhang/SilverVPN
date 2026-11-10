@@ -7,6 +7,11 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const yaml = require('js-yaml');
+const {
+  getDirectRules,
+  getRejectRules,
+  getProxyRoutingRules
+} = require('../lib/routing-rules');
 
 const DEFAULT_HTTP_PORT = 4780;
 const DEFAULT_SOCKS_PORT = 4781;
@@ -14,33 +19,6 @@ const DEFAULT_CORE_PORT = 4790;
 const DEFAULT_USER_AGENT = 'ClashMeta/1.19.27 SilverVPN/0.1';
 const SHADOWROCKET_USER_AGENT = 'Shadowrocket/1995 CFNetwork/1408.0.4 Darwin/22.5.0';
 const KNOWN_SCHEMES = new Set(['ss', 'ssr', 'vmess', 'trojan', 'vless', 'hysteria', 'hysteria2', 'hy2', 'tuic', 'snell']);
-const DEFAULT_BYPASS_HOSTS = [
-  'localhost',
-  '127.0.0.0/8',
-  '::1',
-  '10.0.0.0/8',
-  '172.16.0.0/12',
-  '192.168.0.0/16',
-  '169.254.0.0/16',
-  'gitlab.reallab.org.cn',
-  '*.reallab.org.cn',
-  '*.local'
-];
-const ALWAYS_PROXY_RULES = [
-  'DOMAIN-SUFFIX,claude.ai,Proxy',
-  'DOMAIN-SUFFIX,anthropic.com,Proxy',
-  'DOMAIN-SUFFIX,claudeusercontent.com,Proxy',
-  'DOMAIN,platform.claude.com,Proxy',
-  'DOMAIN,downloads.claude.ai,Proxy',
-  'DOMAIN-SUFFIX,openai.com,Proxy',
-  'DOMAIN-SUFFIX,chatgpt.com,Proxy',
-  'DOMAIN-SUFFIX,github.com,Proxy',
-  'DOMAIN-SUFFIX,githubusercontent.com,Proxy',
-  'DOMAIN-SUFFIX,githubcopilot.com,Proxy',
-  'DOMAIN,copilot-proxy.githubusercontent.com,Proxy'
-];
-const ALWAYS_DIRECT_RULES = ['GEOIP,CN,DIRECT'];
-
 function parseArgs(argv) {
   const args = { _: [] };
   for (let index = 0; index < argv.length; index += 1) {
@@ -199,33 +177,6 @@ function loadSource(source) {
   }
   const file = assertPathInHome(source, 'Import source file');
   return { text: fs.readFileSync(file, 'utf8'), sourceUrl: '', suggestedName: path.basename(file), sourceType: 'file' };
-}
-
-function normalizeBypassHosts(values) {
-  const out = [];
-  const seen = new Set();
-  for (const item of values) {
-    const value = cleanString(item);
-    if (!value || value.startsWith('#') || seen.has(value)) continue;
-    out.push(value);
-    seen.add(value);
-  }
-  return out;
-}
-
-function bypassHostToDirectRule(host) {
-  if (host === 'localhost') return 'DOMAIN,localhost,DIRECT';
-  if (host === '::1') return 'IP-CIDR6,::1/128,DIRECT,no-resolve';
-  if (/^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/.test(host)) return `IP-CIDR,${host},DIRECT,no-resolve`;
-  if (/^[0-9a-f:]+\/\d{1,3}$/i.test(host)) return `IP-CIDR6,${host},DIRECT,no-resolve`;
-  if (host.startsWith('*.')) return `DOMAIN-SUFFIX,${host.slice(2)},DIRECT`;
-  if (host.startsWith('.')) return `DOMAIN-SUFFIX,${host.slice(1)},DIRECT`;
-  if (/^[a-z0-9.-]+$/i.test(host)) return `DOMAIN,${host},DIRECT`;
-  return '';
-}
-
-function getDirectRules() {
-  return normalizeBypassHosts(DEFAULT_BYPASS_HOSTS).map(bypassHostToDirectRule).filter(Boolean).concat(ALWAYS_DIRECT_RULES);
 }
 
 function looksLikeClashConfig(value) {
@@ -581,7 +532,7 @@ function buildConfigFromProxies(proxies) {
     'external-controller': `127.0.0.1:${DEFAULT_CORE_PORT}`,
     proxies,
     'proxy-groups': [{ name: 'Proxy', type: 'select', proxies: [...names, 'DIRECT'] }],
-    rules: [...ALWAYS_PROXY_RULES, ...getDirectRules(), 'MATCH,Proxy']
+    rules: [...getRejectRules(), ...getProxyRoutingRules('Proxy'), ...getDirectRules(), 'MATCH,Proxy']
   };
 }
 

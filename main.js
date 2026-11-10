@@ -19,6 +19,15 @@ const { spawn, spawnSync } = require('child_process');
 const crypto = require('crypto');
 const yaml = require('js-yaml');
 const { URL } = require('url');
+const { portsFromBase, PORT_BASE_MIN, PORT_GROUP_RULES } = require('./lib/ports');
+const {
+  DEFAULT_BYPASS_HOSTS,
+  normalizeBypassHosts,
+  bypassHostToDirectRule,
+  getBypassHosts: sharedGetBypassHosts,
+  getDirectRules,
+  getProxyRoutingRules
+} = require('./lib/routing-rules');
 
 const APP_NAME = 'SilverVPN';
 const LEGACY_APP_NAMES = ['熊猫上网 Linux', 'xiongmao-vpn-linux'];
@@ -52,34 +61,6 @@ const MODE_LABELS = {
   Global: '全局代理',
   Direct: '直连模式'
 };
-const DEFAULT_BYPASS_HOSTS = [
-  'localhost',
-  '127.0.0.0/8',
-  '::1',
-  '10.0.0.0/8',
-  '172.16.0.0/12',
-  '192.168.0.0/16',
-  '169.254.0.0/16',
-  'gitlab.reallab.org.cn',
-  '*.reallab.org.cn',
-  '*.local'
-];
-const ALWAYS_PROXY_RULES = [
-  'DOMAIN-SUFFIX,claude.ai,Proxy',
-  'DOMAIN-SUFFIX,anthropic.com,Proxy',
-  'DOMAIN-SUFFIX,claudeusercontent.com,Proxy',
-  'DOMAIN,platform.claude.com,Proxy',
-  'DOMAIN,downloads.claude.ai,Proxy',
-  'DOMAIN-SUFFIX,openai.com,Proxy',
-  'DOMAIN-SUFFIX,chatgpt.com,Proxy',
-  'DOMAIN-SUFFIX,google.com,Proxy',
-  'DOMAIN-SUFFIX,googleapis.com,Proxy',
-  'DOMAIN-SUFFIX,gstatic.com,Proxy',
-  'DOMAIN,storage.googleapis.com,Proxy',
-  'DOMAIN-SUFFIX,github.com,Proxy',
-  'DOMAIN-SUFFIX,githubusercontent.com,Proxy'
-];
-const ALWAYS_DIRECT_RULES = ['GEOIP,CN,DIRECT'];
 
 let mainWindow = null;
 let tray = null;
@@ -273,6 +254,23 @@ function copyIfMissing(source, target) {
   }
 }
 
+// 包内资源（GeoIP 库等）升级后必须覆盖用户目录里的旧副本，
+// 否则 GEOIP,CN 会一直用过期数据判定。
+function syncBundledResource(source, target) {
+  if (!fs.existsSync(source)) {
+    return;
+  }
+  ensureDir(path.dirname(target));
+  if (fs.existsSync(target)) {
+    const sourceStat = fs.statSync(source);
+    const targetStat = fs.statSync(target);
+    if (targetStat.size === sourceStat.size && targetStat.mtimeMs >= sourceStat.mtimeMs) {
+      return;
+    }
+  }
+  fs.copyFileSync(source, target);
+}
+
 function readJson(file, fallback) {
   try {
     if (!fs.existsSync(file)) {
@@ -287,21 +285,15 @@ function readJson(file, fallback) {
 
 function writeJson(file, value) {
   ensureDir(path.dirname(file));
-  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+  // 先写临时文件再 rename：同分区下 rename 是原子的，
+  // 避免进程崩溃或断电留下截断的 JSON。
+  const temp = `${file}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(value, null, 2));
+  fs.renameSync(temp, file);
 }
 
 /* ---------- 端口组（与 CLI server.json 共享） ---------- */
-const PORT_BASE_MIN = 1024;
-const PORT_GROUP_RULES = { socks: 1, service: 8, core: 10 };
 
-function portsFromBase(base) {
-  return {
-    http: base,
-    socks: base + PORT_GROUP_RULES.socks,
-    service: base + PORT_GROUP_RULES.service,
-    core: base + PORT_GROUP_RULES.core
-  };
-}
 
 function normalizePortGroup(value) {
   const base = Number(value);
@@ -401,56 +393,6 @@ function migrateLegacyGuiSettings() {
   fs.copyFileSync(legacyFile, `${legacyFile}.gui-migrated`);
   fs.rmSync(legacyFile);
   appendCoreLog(`[${new Date().toISOString()}] migrated legacy GUI settings into shared settings.json\n`);
-}
-
-function normalizeBypassHosts(values) {
-  const source = Array.isArray(values) ? values : String(values || '').split(/\r?\n/);
-  const cleaned = [];
-  const seen = new Set();
-  for (const item of source) {
-    const value = String(item || '').trim();
-    if (!value || value.startsWith('#')) {
-      continue;
-    }
-    if (!seen.has(value)) {
-      cleaned.push(value);
-      seen.add(value);
-    }
-  }
-  return cleaned;
-}
-
-function getBypassHosts() {
-  return normalizeBypassHosts([...DEFAULT_BYPASS_HOSTS, ...(settings.bypassHosts || [])]);
-}
-
-function bypassHostToDirectRule(host) {
-  if (host === 'localhost') {
-    return 'DOMAIN,localhost,DIRECT';
-  }
-  if (host === '::1') {
-    return 'IP-CIDR6,::1/128,DIRECT,no-resolve';
-  }
-  if (/^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/.test(host)) {
-    return `IP-CIDR,${host},DIRECT,no-resolve`;
-  }
-  if (/^[0-9a-f:]+\/\d{1,3}$/i.test(host)) {
-    return `IP-CIDR6,${host},DIRECT,no-resolve`;
-  }
-  if (host.startsWith('*.')) {
-    return `DOMAIN-SUFFIX,${host.slice(2)},DIRECT`;
-  }
-  if (host.startsWith('.')) {
-    return `DOMAIN-SUFFIX,${host.slice(1)},DIRECT`;
-  }
-  if (/^[a-z0-9.-]+$/i.test(host)) {
-    return `DOMAIN,${host},DIRECT`;
-  }
-  return '';
-}
-
-function getDirectRules() {
-  return normalizeBypassHosts([...getBypassHosts().map(bypassHostToDirectRule), ...ALWAYS_DIRECT_RULES]);
 }
 
 function initializeFilesystem() {
@@ -761,10 +703,6 @@ function getProxyRuleTarget(document) {
   return preferred ? String(preferred.name) : 'Proxy';
 }
 
-function getProxyRoutingRules(target) {
-  return ALWAYS_PROXY_RULES.map(rule => rule.replace(/,Proxy$/, `,${target}`));
-}
-
 function ensureDocumentRules(document) {
   const existing = Array.isArray(document.rules) ? document.rules.map(rule => String(rule)) : [];
   const existingSet = new Set(existing);
@@ -854,6 +792,23 @@ function buildTunRuntimeConfig(sourceText) {
   });
 }
 
+// 本机没有 IPv6 默认路由/全局地址时，若核心仍按 AAAA 记录拨号，
+// 所有 GeoIP 直连的域名都会报 "network is unreachable"。
+let cachedIpv6Available = null;
+function hasUsableIpv6() {
+  if (cachedIpv6Available !== null) {
+    return cachedIpv6Available;
+  }
+  try {
+    const route = captureSync('ip', ['-6', 'route', 'show', 'default']).trim();
+    const addrs = captureSync('ip', ['-6', 'addr', 'show', 'scope', 'global']).trim();
+    cachedIpv6Available = Boolean(route) && /inet6\s+[0-9a-f:]+\//i.test(addrs);
+  } catch (_error) {
+    cachedIpv6Available = false;
+  }
+  return cachedIpv6Available;
+}
+
 function patchConfigForRuntime(sourceText, options = {}) {
   if (options.tunEnabled) {
     return buildTunRuntimeConfig(sourceText);
@@ -873,6 +828,12 @@ function patchConfigForRuntime(sourceText, options = {}) {
     const pattern = new RegExp(`^${key}:.*$`, 'm');
     text = pattern.test(text) ? text.replace(pattern, line) : `${line}\n${text}`;
   }
+
+  // 只在真正具备 IPv6 时启用，避免 AAAA 记录导致直连全部失败
+  const ipv6Available = hasUsableIpv6();
+  const ipv6Line = `ipv6: ${ipv6Available}`;
+  const ipv6Pattern = /^ipv6:.*$/m;
+  text = ipv6Pattern.test(text) ? text.replace(ipv6Pattern, ipv6Line) : `${ipv6Line}\n${text}`;
 
   text = ensureDirectRules(text);
   return text;
@@ -1190,9 +1151,99 @@ async function restoreDefaultNetwork() {
   };
 }
 
+// 核心每处理一条连接就写一行，不设上限会无限增长。
+const CORE_LOG_MAX_BYTES = 10 * 1024 * 1024;
+const CORE_LOG_KEEP_FILES = 2;
+const CORE_LOG_ROTATE_CHECK_INTERVAL_MS = 1000;
+const CORE_LOG_PRUNE_INTERVAL_MS = 10 * 60 * 1000;
+let lastLogRotateCheckAt = 0;
+let lastLogPruneAt = 0;
+let logMaintenanceTimer = null;
+
+function coreLogPaths() {
+  const base = path.join(runtime.logsDir, 'core.log');
+  const rotated = [];
+  for (let index = 1; index <= CORE_LOG_KEEP_FILES; index += 1) {
+    rotated.push(`${base}.${index}`);
+  }
+  return { base, rotated };
+}
+
+function rotateCoreLogIfNeeded(force = false) {
+  const now = Date.now();
+  if (!force && now - lastLogRotateCheckAt < CORE_LOG_ROTATE_CHECK_INTERVAL_MS) {
+    return;
+  }
+  lastLogRotateCheckAt = now;
+  if (force || now - lastLogPruneAt >= CORE_LOG_PRUNE_INTERVAL_MS) {
+    pruneLogDirectory();
+    lastLogPruneAt = now;
+  }
+  const { base, rotated } = coreLogPaths();
+  try {
+    if (!fs.existsSync(base)) {
+      return;
+    }
+    if (fs.statSync(base).size < CORE_LOG_MAX_BYTES) {
+      return;
+    }
+    // 由旧到新依次后移，最老的一份被覆盖
+    for (let index = rotated.length - 1; index > 0; index -= 1) {
+      if (fs.existsSync(rotated[index - 1])) {
+        fs.renameSync(rotated[index - 1], rotated[index]);
+      }
+    }
+    fs.renameSync(base, rotated[0]);
+  } catch (_error) {
+    // 轮转失败不应影响核心运行
+  }
+}
+
+function pruneLogDirectory() {
+  const { base, rotated } = coreLogPaths();
+  const keep = new Set([path.basename(base), ...rotated.map(item => path.basename(item))]);
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  try {
+    for (const entry of fs.readdirSync(runtime.logsDir, { withFileTypes: true })) {
+      if (!entry.isFile() || keep.has(entry.name)) {
+        continue;
+      }
+      const file = path.join(runtime.logsDir, entry.name);
+      try {
+        if (fs.statSync(file).mtimeMs < cutoff) {
+          fs.rmSync(file, { force: true });
+        }
+      } catch (_error) {
+        // 单个文件失败不影响其它文件
+      }
+    }
+  } catch (_error) {
+    // 目录不可读时忽略
+  }
+}
+
+function startLogMaintenance() {
+  if (logMaintenanceTimer) {
+    return;
+  }
+  pruneLogDirectory();
+  lastLogPruneAt = Date.now();
+  logMaintenanceTimer = setInterval(() => {
+    rotateCoreLogIfNeeded(true);
+  }, CORE_LOG_PRUNE_INTERVAL_MS);
+}
+
+function stopLogMaintenance() {
+  if (logMaintenanceTimer) {
+    clearInterval(logMaintenanceTimer);
+    logMaintenanceTimer = null;
+  }
+}
+
 function appendCoreLog(chunk) {
-  const file = path.join(runtime.logsDir, 'core.log');
-  fs.appendFile(file, chunk, () => {});
+  rotateCoreLogIfNeeded();
+  const { base } = coreLogPaths();
+  fs.appendFile(base, chunk, () => {});
 }
 
 function requestCore(pathname, options = {}) {
@@ -1214,20 +1265,42 @@ function requestCore(pathname, options = {}) {
       },
       response => {
         let raw = '';
-        response.setEncoding('utf8');
-        response.on('data', chunk => {
-          raw += chunk;
-        });
-        response.on('end', () => {
+        let settled = false;
+        const finish = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
           if (response.statusCode >= 400) {
             reject(new Error(`Core API ${method} ${pathname} returned ${response.statusCode}`));
             return;
           }
-          resolve(raw ? JSON.parse(raw) : null);
+          try {
+            resolve(raw ? JSON.parse(raw) : null);
+          } catch (error) {
+            reject(error);
+          }
+        };
+        response.on('data', chunk => {
+          raw += chunk;
+          // /traffic 是 SSE 流，永不 end；拿到首行完整 JSON 就返回并断开
+          if (options.firstLine) {
+            const newline = raw.indexOf('\n');
+            if (newline !== -1) {
+              raw = raw.slice(0, newline);
+              finish();
+              request.destroy();
+            }
+          }
         });
+        response.on('end', finish);
       }
     );
-    request.on('error', reject);
+    request.on('error', error => {
+      if (!(options.firstLine && error.code === 'ECONNRESET')) {
+        reject(error);
+      }
+    });
     if (body) {
       request.write(body);
     }
@@ -1298,6 +1371,47 @@ async function refreshExternalCoreState() {
   externalCoreRunning = await probeExternalCore();
 }
 
+// 崩溃重启：1s/3s/10s 三次退避，超过则放弃并记录日志
+const CORE_RESTART_DELAYS_MS = [1000, 3000, 10000];
+let coreRestartAttempts = 0;
+let coreRestartTimer = null;
+let coreStopRequested = false;
+
+function scheduleCoreRestart(code, signal) {
+  if (coreStopRequested || isQuitting || shutdownInProgress) {
+    return;
+  }
+  if (coreRestartTimer || coreRestartAttempts >= CORE_RESTART_DELAYS_MS.length) {
+    return;
+  }
+  const delay = CORE_RESTART_DELAYS_MS[coreRestartAttempts];
+  coreRestartAttempts += 1;
+  appendCoreLog(
+    `[${new Date().toISOString()}] scheduling core restart #${coreRestartAttempts} in ${delay}ms (code=${code} signal=${signal})\n`
+  );
+  coreRestartTimer = setTimeout(async () => {
+    coreRestartTimer = null;
+    if (coreStopRequested || isQuitting) {
+      return;
+    }
+    try {
+      await startCore();
+      coreRestartAttempts = 0;
+    } catch (error) {
+      appendCoreLog(`[${new Date().toISOString()}] core restart failed: ${error.message}\n`);
+      scheduleCoreRestart(null, null);
+    }
+  }, delay);
+}
+
+function resetCoreRestartState() {
+  if (coreRestartTimer) {
+    clearTimeout(coreRestartTimer);
+    coreRestartTimer = null;
+  }
+  coreRestartAttempts = 0;
+}
+
 async function startCore() {
   if (coreProcess && !coreProcess.killed) {
     return true;
@@ -1352,6 +1466,8 @@ async function startCore() {
     if (coreProcess === child) {
       coreProcess = null;
     }
+    // 非主动停止时按退避策略重启，避免核心崩溃后需要用户手动恢复
+    scheduleCoreRestart(code, signal);
   });
 
   const ready = await waitForCore(CORE_START_TIMEOUT_MS);
@@ -1367,10 +1483,14 @@ async function startCore() {
     }
   }
   await restoreCoreSelection();
+  coreStopRequested = false;
+  resetCoreRestartState();
   return true;
 }
 
 function stopCore() {
+  coreStopRequested = true;
+  resetCoreRestartState();
   if (externalCoreRunning) {
     externalCoreRunning = false;
     coreProcess = null;
@@ -1411,6 +1531,8 @@ async function restoreCoreSelection() {
 }
 
 async function stopCoreAndWait(timeoutMs = 4000) {
+  coreStopRequested = true;
+  resetCoreRestartState();
   if (externalCoreRunning) {
     externalCoreRunning = false;
     coreProcess = null;
@@ -1551,24 +1673,33 @@ async function setGnomeProxy(enabled) {
   }
 
   if (!enabled) {
-    await runCommand('gsettings', ['set', 'org.gnome.system.proxy', 'mode', 'none']);
+    // 关闭路径必须绝对可靠：任何一步失败都不能让用户停在断网状态
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy', 'mode', 'none']).catch(() => {});
     return;
   }
 
+  // 先把所有值算好，避免设置到一半崩溃导致代理指向已关闭的端口
   const summary = readConfigSummary();
-  await runCommand('gsettings', ['set', 'org.gnome.system.proxy', 'mode', 'manual']);
-  await runCommand('gsettings', ['set', 'org.gnome.system.proxy.http', 'host', CONTROL_HOST]);
-  await runCommand('gsettings', ['set', 'org.gnome.system.proxy.http', 'port', String(summary.port)]);
-  await runCommand('gsettings', ['set', 'org.gnome.system.proxy.https', 'host', CONTROL_HOST]);
-  await runCommand('gsettings', ['set', 'org.gnome.system.proxy.https', 'port', String(summary.port)]);
-  await runCommand('gsettings', ['set', 'org.gnome.system.proxy.socks', 'host', CONTROL_HOST]);
-  await runCommand('gsettings', ['set', 'org.gnome.system.proxy.socks', 'port', String(summary['socks-port'])]);
-  await runCommand('gsettings', [
-    'set',
-    'org.gnome.system.proxy',
-    'ignore-hosts',
-    `[${getBypassHosts().map(host => `'${host.replace(/'/g, "'\\''")}'`).join(', ')}]`
-  ]);
+  const ignoreList = `[${sharedGetBypassHosts(settings.bypassHosts || [])
+    .map(host => `'${host.replace(/'/g, "'\\''")}'`)
+    .join(', ')}]`;
+  const httpPort = String(summary.port);
+  const socksPort = String(summary['socks-port']);
+
+  try {
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy.http', 'host', CONTROL_HOST]);
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy.http', 'port', httpPort]);
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy.https', 'host', CONTROL_HOST]);
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy.https', 'port', httpPort]);
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy.socks', 'host', CONTROL_HOST]);
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy.socks', 'port', socksPort]);
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy', 'ignore-hosts', ignoreList]);
+    // mode 最后设置：前面的任何失败都不会让系统开始走代理
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy', 'mode', 'manual']);
+  } catch (error) {
+    await runCommand('gsettings', ['set', 'org.gnome.system.proxy', 'mode', 'none']).catch(() => {});
+    throw error;
+  }
 }
 
 function shellSingleQuote(value) {
@@ -1594,7 +1725,7 @@ function writeShellProxyState(enabled) {
   if (enabled) {
     const httpProxy = `http://${CONTROL_HOST}:${HTTP_PROXY_PORT}`;
     const socksProxy = `socks5h://${CONTROL_HOST}:${SOCKS_PROXY_PORT}`;
-    const noProxy = getBypassHosts().join(',');
+    const noProxy = sharedGetBypassHosts(settings.bypassHosts || []).join(',');
     lines.push(
       `export HTTP_PROXY=${shellSingleQuote(httpProxy)}`,
       `export HTTPS_PROXY=${shellSingleQuote(httpProxy)}`,
@@ -1628,8 +1759,19 @@ async function setSystemProxy(enabled) {
       throw new Error('SilverVPN 核心启动失败，未开启系统和终端代理。请查看核心日志。');
     }
   }
-  await setGnomeProxy(enabled);
-  writeShellProxyState(enabled);
+  try {
+    await setGnomeProxy(enabled);
+    writeShellProxyState(enabled);
+  } catch (error) {
+    // 应用失败必须回滚，否则用户会停在"代理已开但应用不知道"的断网状态
+    if (enabled) {
+      await setGnomeProxy(false).catch(() => {});
+      writeShellProxyState(false);
+    }
+    settings.systemProxy = false;
+    saveSettings();
+    throw error;
+  }
   settings.systemProxy = enabled;
   saveSettings();
 }
@@ -2219,7 +2361,7 @@ function proxyToCore(request, response) {
     }
     if (request.method === 'GET' && request.url.startsWith('/logs')) {
       const logFile = path.join(runtime.logsDir, 'core.log');
-      sendText(response, 200, fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '');
+      sendText(response, 200, readTail(logFile, 64 * 1024));
       return;
     }
     sendJson(response, 503, { message: 'Clash core is not running.' });
@@ -3215,6 +3357,9 @@ async function getNetworkStatusFromGui() {
 
 let trafficTracker = null;
 let lastConnSamplingAt = 0;
+let trafficSamplingTimer = null;
+let trafficSamplingInFlight = false;
+let lastTrafficSamplingErrorAt = 0;
 
 function trafficDateKey(offsetDays = 0) {
   const date = new Date();
@@ -3260,7 +3405,8 @@ async function accumulateTrafficConnections() {
   if (!trafficTracker) {
     return;
   }
-  if (Date.now() - lastConnSamplingAt < 10000) {
+  // 采样间隔越短，连接关闭前未结算的字节丢失越少。
+  if (Date.now() - lastConnSamplingAt < 2000) {
     return;
   }
   lastConnSamplingAt = Date.now();
@@ -3292,12 +3438,48 @@ async function accumulateTrafficConnections() {
         delete trafficTracker.connBaseline[id];
       }
     }
+    // 短连接风暴时基线表会短暂膨胀，限制上限避免无界增长
+    const CONN_BASELINE_MAX = 2000;
+    const baselineIds = Object.keys(trafficTracker.connBaseline);
+    if (baselineIds.length > CONN_BASELINE_MAX) {
+      for (const id of baselineIds.slice(0, baselineIds.length - CONN_BASELINE_MAX)) {
+        delete trafficTracker.connBaseline[id];
+      }
+    }
+    // 节点列表按当日已记账的节点为准，遍历所有日期以便跨天补录。
     pruneTrafficDates();
     if (Date.now() - trafficTracker.lastFlush > 60000) {
       flushTrafficStats();
     }
-  } catch (_error) {
-    // core not running; snapshot will catch up next time
+  } catch (error) {
+    // 记录节流后的采样错误，避免统计失效时完全无迹可查
+    if (Date.now() - lastTrafficSamplingErrorAt > 60000) {
+      lastTrafficSamplingErrorAt = Date.now();
+      appendCoreLog('[' + new Date().toISOString() + '] traffic sampling failed: ' + (error.message || error) + '\n');
+    }
+  }
+}
+
+async function sampleTrafficStats() {
+  if (trafficSamplingInFlight) return;
+  trafficSamplingInFlight = true;
+  try {
+    await accumulateTrafficConnections();
+  } finally {
+    trafficSamplingInFlight = false;
+  }
+}
+
+function startTrafficSampling() {
+  if (trafficSamplingTimer) return;
+  sampleTrafficStats().catch(() => {});
+  trafficSamplingTimer = setInterval(() => sampleTrafficStats().catch(() => {}), 2000);
+}
+
+function stopTrafficSampling() {
+  if (trafficSamplingTimer) {
+    clearInterval(trafficSamplingTimer);
+    trafficSamplingTimer = null;
   }
 }
 
@@ -3326,7 +3508,11 @@ function getTrafficStats() {
     d30: Array.from({ length: 30 }, (_, index) => trafficDateKey(index))
   };
   const nodesMap = {};
-  for (const node of Object.keys(trafficTracker.byDate[todayKey] || {})) {
+  const knownNodes = new Set();
+  for (const date of windows.d30) {
+    Object.keys(trafficTracker.byDate[date] || {}).forEach(node => knownNodes.add(node));
+  }
+  for (const node of knownNodes) {
     if (node === '__total__') continue;
     const entry = nodesMap[node] || (nodesMap[node] = { today: empty(), d3: empty(), d7: empty(), d30: empty() });
     entry.today = sumTrafficWindow(node, windows.today);
@@ -3354,21 +3540,37 @@ function getTrafficStats() {
 
 async function monitorStatsFromGui() {
   const stats = { up: 0, down: 0, connections: 0, delay: null, inactive: true };
+  // 用 /connections 的累计计数器算增量：/traffic 是 SSE 流，会一直挂住请求。
   try {
-    const traffic = await requestCore('/traffic');
-    stats.up = Number(traffic.up) || 0;
-    stats.down = Number(traffic.down) || 0;
+    const snapshot = await requestCore('/connections');
+    const connections = Array.isArray(snapshot.connections) ? snapshot.connections : [];
+    stats.connections = connections.length;
+    stats.inactive = false;
+
+    let download = 0;
+    let upload = 0;
+    for (const conn of connections) {
+      download += Number(conn.download) || 0;
+      upload += Number(conn.upload) || 0;
+    }
+    const now = Date.now();
+    const prev = monitorTrafficBaseline;
+    monitorTrafficBaseline = { total: download + upload, at: now };
+    // 首次采样只建立基线，避免把历史累计误报成 1 秒内的瞬时速率
+    if (prev && now > prev.at) {
+      const deltaBytes = (download + upload) - prev.total;
+      const seconds = (now - prev.at) / 1000;
+      if (deltaBytes >= 0) {
+        stats.down = Math.round(Math.max(0, download - (prev.download || 0)) / seconds);
+        stats.up = Math.round(Math.max(0, upload - (prev.upload || 0)) / seconds);
+      }
+    }
+    monitorTrafficBaseline.download = download;
+    monitorTrafficBaseline.upload = upload;
   } catch (_error) {
     return stats;
   }
-  try {
-    const connections = await requestCore('/connections');
-    stats.connections = Array.isArray(connections.connections) ? connections.connections.length : 0;
-    stats.inactive = false;
-  } catch (_error) {
-    stats.inactive = false;
-  }
-  accumulateTrafficConnections().catch(() => {});
+  await accumulateTrafficConnections().catch(() => {});
   return stats;
 }
 
@@ -3751,6 +3953,7 @@ function createWindow() {
 async function bootstrap() {
   app.setName(APP_NAME);
   initializeFilesystem();
+  pruneLogDirectory();
   initTrafficTracker();
   settings.systemProxy = false;
   settings.tunEnabled = false;
@@ -3774,6 +3977,8 @@ async function bootstrap() {
   startCompatServer();
   createWindow();
   createTray();
+  startLogMaintenance();
+  startTrafficSampling();
 }
 
 const singleInstanceLock = app.requestSingleInstanceLock();
@@ -3791,6 +3996,8 @@ app.on('activate', () => {
 
 app.on('before-quit', event => {
   isQuitting = true;
+  stopLogMaintenance();
+  stopTrafficSampling();
   flushTrafficStats(true);
   if (!shutdownInProgress && settings.tunEnabled) {
     event.preventDefault();

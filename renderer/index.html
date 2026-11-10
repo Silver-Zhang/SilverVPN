@@ -264,30 +264,22 @@
             </div>
           </div>
           <div id="trafficBody">
-          <div class="traffic-overview">
-            <div class="t-stat">
-              <span class="kpi-icon" aria-hidden="true">📅</span>
-              <span class="kpi-label" data-i18n="trafficToday">今天</span>
-              <span id="tToday" class="t-value">0 B</span>
-              <span class="t-bar"><i id="tTodayBar"></i></span>
+          <div class="traffic-range-tabs" id="trafficRangeTabs" role="tablist">
+            <button class="range-tab is-active" type="button" data-range="today" role="tab" data-i18n="trafficToday">今天</button>
+            <button class="range-tab" type="button" data-range="d3" role="tab" data-i18n="trafficD3">近 3 天</button>
+            <button class="range-tab" type="button" data-range="d7" role="tab" data-i18n="trafficD7">近 7 天</button>
+            <button class="range-tab" type="button" data-range="d30" role="tab" data-i18n="trafficD30">近 30 天</button>
+          </div>
+          <div class="traffic-summary">
+            <div class="t-stat t-stat-primary">
+              <span class="kpi-label" data-i18n="trafficProxy">代理流量</span>
+              <span id="tProxy" class="t-value">0 B</span>
+              <span class="t-sub" id="tProxySub">↓ 0 B / ↑ 0 B</span>
             </div>
             <div class="t-stat">
-              <span class="kpi-icon" aria-hidden="true">◔</span>
-              <span class="kpi-label" data-i18n="trafficD3">近 3 天</span>
-              <span id="tD3" class="t-value">0 B</span>
-              <span class="t-bar"><i id="tD3Bar"></i></span>
-            </div>
-            <div class="t-stat">
-              <span class="kpi-icon" aria-hidden="true">◑</span>
-              <span class="kpi-label" data-i18n="trafficD7">近 7 天</span>
-              <span id="tD7" class="t-value">0 B</span>
-              <span class="t-bar"><i id="tD7Bar"></i></span>
-            </div>
-            <div class="t-stat">
-              <span class="kpi-icon" aria-hidden="true">◕</span>
-              <span class="kpi-label" data-i18n="trafficD30">近 30 天</span>
-              <span id="tD30" class="t-value">0 B</span>
-              <span class="t-bar t-bar-max"><i></i></span>
+              <span class="kpi-label" data-i18n="trafficTotal">总流量</span>
+              <span id="tTotal" class="t-value">0 B</span>
+              <span class="t-sub" id="tTotalSub">↓ 0 B / ↑ 0 B</span>
             </div>
           </div>
           <div id="trafficNodes" class="traffic-cards">

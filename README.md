@@ -9,7 +9,7 @@ The project focuses on practical Linux usage: subscription import, profile manag
 ## Highlights
 
 - **Linux desktop client**: Electron-based GUI with subscription, node, mode and diagnostics panels.
-- **Headless CLI**: `svpn on`, `svpn off`, `svpn status`, `svpn import`, `svpn nodes`, `svpn use`, `svpn test`.
+- **Headless CLI**: `svpn on`, `svpn off`, `svpn status`, `svpn import`, `svpn nodes`, `svpn use`, `svpn traffic`, `svpn test`.
 - **Subscription support**: Clash/Mihomo YAML, subscription URLs, `sub://...`, URI lists, and common proxy schemes such as `ss`, `ssr`, `vmess`, `trojan`, `vless`, `hysteria2`, `tuic`, and `snell`.
 - **Profile management**: list, switch, rename and delete saved subscription profiles.
 - **Routing modes**: smart/rule, global, and direct.
@@ -18,8 +18,9 @@ The project focuses on practical Linux usage: subscription import, profile manag
 - **Multi-user server support**: per-user data directories, per-user ports, per-user daemon, per-user terminal state, and per-user VS Code Remote settings.
 - **Custom port group**: the GUI network panel and the CLI (`svpn config ports`) share one port configuration, so a change on either side applies to both.
 - **Modern themed UI**: 7 color themes, custom background image, glass opacity, theme-colored hover glow, and a live particle-physics backdrop — place and drag emitters and gravity sources, pick ring-orbit or black-hole capture, and configure spin direction (CW/CCW/random).
-- **Live monitor & traffic stats**: real-time traffic/delay/connection charts (collapsible), per-node traffic over today/3/7/30 days with automatic ledger cleanup.
-- **Developer-tool friendly**: works with terminal tools and remote IDE workflows through explicit proxy variables and VS Code Remote configuration.
+- **Live monitor & traffic stats**: real-time traffic/delay/connection charts, per-node traffic by proxy/direct route for today/3/7/30 days, server-address visibility, and matching `svpn traffic` CLI reports.
+- **Safe proxy lifecycle**: system/shell proxy updates are transactional and roll back on failure; log retention is capped (10 MB × 3 files) with stale-log cleanup.
+- **Developer-tool friendly**: works with terminal tools and remote IDE workflows through explicit proxy variables and VS Code Remote configuration; automatically disables mihomo IPv6 when the host lacks usable IPv6 routing.
 
 ## Documentation
 
@@ -89,7 +90,12 @@ svpn nodes --delay
 svpn use 3
 svpn mode smart
 svpn test
+svpn traffic             # Today's per-node proxy/direct traffic
+svpn traffic 7           # Last 7 days
+svpn traffic 30 --json   # Last 30 days as JSON
 ```
+
+`svpn traffic` reads the same persisted ledger as the desktop GUI and reports upload/download totals split by proxy node (including server address) and direct traffic. Valid ranges are `today` (default), `3`, `7`, and `30`.
 
 Manage bypassed (direct) hosts:
 

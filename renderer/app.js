@@ -117,6 +117,10 @@
       trafficD7: '近 7 天',
       trafficD30: '近 30 天',
       trafficEmpty: '暂无流量记录，使用代理后将自动统计',
+      trafficProxy: '代理流量',
+      trafficTotal: '总流量',
+      trafficProxyBadge: '代理',
+      trafficDirectBadge: '直连',
       currentNodeKicker: '当前节点',
       notCheckedYet: '尚未检测',
       silverStateOff: '未连接',
@@ -315,6 +319,10 @@
       trafficD7: 'Last 7 days',
       trafficD30: 'Last 30 days',
       trafficEmpty: 'No traffic recorded yet; usage is tracked automatically.',
+      trafficProxy: 'Proxy traffic',
+      trafficTotal: 'Total traffic',
+      trafficProxyBadge: 'Proxy',
+      trafficDirectBadge: 'Direct',
       currentNodeKicker: 'Current node',
       notCheckedYet: 'Not checked yet',
       silverStateOff: 'Disconnected',
@@ -1389,49 +1397,68 @@
     });
   }
 
+  // 当前选中的统计时长；点击标签切换，不再一次全显示
+  state.trafficRange = state.trafficRange || 'today';
+
+  function rangeTotal(entry) {
+    return entry ? (entry.up || 0) + (entry.down || 0) : 0;
+  }
+
+  function rangeLabel(range) {
+    if (range === 'today') return t('trafficToday');
+    if (range === 'd3') return t('trafficD3');
+    if (range === 'd7') return t('trafficD7');
+    return t('trafficD30');
+  }
+
   function renderTrafficStats(stats) {
+    const range = state.trafficRange || 'today';
     const ranges = (stats && stats.ranges) || {};
-    const total = value => (value ? value.up + value.down : 0);
-    const today = total(ranges.today);
-    const d3 = total(ranges.d3);
-    const d7 = total(ranges.d7);
-    const d30 = total(ranges.d30);
-    setText('#tToday', formatBytes(today));
-    setText('#tD3', formatBytes(d3));
-    setText('#tD7', formatBytes(d7));
-    setText('#tD30', formatBytes(d30));
-    const refMax = Math.max(d30, 1);
-    const setBar = (id, value) => {
-      const bar = $(id);
-      if (bar) {
-        bar.style.width = `${Math.min(100, Math.round((value / refMax) * 100))}%`;
-      }
-    };
-    setBar('#tTodayBar', today);
-    setBar('#tD3Bar', d3);
-    setBar('#tD7Bar', d7);
+    const proxyRanges = (stats && stats.proxy) || {};
+    const totalEntry = ranges[range] || { up: 0, down: 0 };
+    const proxyEntry = proxyRanges[range] || { up: 0, down: 0 };
+
+    document.querySelectorAll('#trafficRangeTabs .range-tab').forEach(button => {
+      button.classList.toggle('is-active', button.dataset.range === range);
+    });
+
+    setText('#tProxy', formatBytes(rangeTotal(proxyEntry)));
+    setText('#tProxySub', `↓ ${formatBytes(proxyEntry.down || 0)} / ↑ ${formatBytes(proxyEntry.up || 0)}`);
+    setText('#tTotal', formatBytes(rangeTotal(totalEntry)));
+    setText('#tTotalSub', `↓ ${formatBytes(totalEntry.down || 0)} / ↑ ${formatBytes(totalEntry.up || 0)}`);
+
     const nodes = $('#trafficNodes');
     if (!nodes) {
       return;
     }
-    const rows = (stats && stats.nodes) || [];
+    // 只展示有该时段数据的条目，代理节点排在直连之前
+    const rows = ((stats && stats.nodes) || [])
+      .map(item => ({ ...item, showTotal: rangeTotal(item[range]) }))
+      .filter(item => item.showTotal > 0)
+      .sort((a, b) => {
+        if (a.proxy !== b.proxy) return a.proxy ? -1 : 1;
+        return b.showTotal - a.showTotal;
+      });
+    const maxValue = Math.max(1, ...rows.map(item => item.showTotal));
     nodes.innerHTML = rows.length
       ? rows
         .map(item => {
-          const total30 = total(item.d30);
-          const width = Math.min(100, Math.round((total30 / refMax) * 100));
+          const width = Math.min(100, Math.round((item.showTotal / maxValue) * 100));
+          const ip = item.server ? `<span class="tc-ip" title="${escapeHtml(item.server)}">${escapeHtml(item.server)}</span>` : '';
+          const badge = item.proxy
+            ? `<span class="tc-badge tc-badge-proxy">${t('trafficProxyBadge')}</span>`
+            : `<span class="tc-badge">${t('trafficDirectBadge')}</span>`;
           return `
-            <div class="traffic-card">
+            <div class="traffic-card ${item.proxy ? 'is-proxy' : 'is-direct'}">
               <div class="tc-head">
                 <span class="tc-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
-                <span class="tc-total">${formatBytes(total30)}</span>
+                ${badge}
+                <span class="tc-total">${formatBytes(item.showTotal)}</span>
               </div>
+              ${ip ? `<div class="tc-meta">${ip}</div>` : ''}
               <div class="tc-track"><i style="width:${width}%"></i></div>
               <div class="tc-cells">
-                <span><b>${state.language === 'en' ? 'Today' : '今天'}</b>${formatBytes(total(item.today))}</span>
-                <span><b>3 ${state.language === 'en' ? 'd' : '天'}</b>${formatBytes(total(item.d3))}</span>
-                <span><b>7 ${state.language === 'en' ? 'd' : '天'}</b>${formatBytes(total(item.d7))}</span>
-                <span><b>30 ${state.language === 'en' ? 'd' : '天'}</b>${formatBytes(total30)}</span>
+                <span><b>${rangeLabel(range)}</b>${formatBytes(item.showTotal)}</span>
               </div>
             </div>`;
         })
@@ -2006,6 +2033,12 @@
       }
     });
     $('#refreshTrafficStats').addEventListener('click', () => loadTrafficStats());
+    document.querySelectorAll('#trafficRangeTabs .range-tab').forEach(button => {
+      button.addEventListener('click', () => {
+        state.trafficRange = button.dataset.range || 'today';
+        loadTrafficStats();
+      });
+    });
     $('#checkUpdate').addEventListener('click', () => loadUpdate(false));
     $('#installUpdate').addEventListener('click', async () => {
       if (!window.confirm(state.language === 'en' ? 'Install the update now? The app will restart after installation.' : '现在安装更新吗？安装完成后将重启应用。')) {
@@ -2696,7 +2729,7 @@
       return { ok: true, host: payload.host, port: payload.port, elapsedMs: 18 };
     }
     if (action === 'check-update') {
-      return { checked: true, currentVersion: '0.2.0', latestVersion: '0.3.0', available: true, dismissed: false };
+      return { checked: true, currentVersion: '0.3.1', latestVersion: '0.3.1', available: false, dismissed: false };
     }
     if (action === 'monitor-stats') {
       return {
@@ -2719,10 +2752,17 @@
           d7: bytes(420 * 1024 * 1024),
           d30: bytes(1100 * 1024 * 1024)
         },
+        proxy: {
+          today: bytes(45 * 1024 * 1024),
+          d3: bytes(140 * 1024 * 1024),
+          d7: bytes(330 * 1024 * 1024),
+          d30: bytes(880 * 1024 * 1024)
+        },
         nodes: [
-          { name: '香港 01', ...range() },
-          { name: '日本 02', ...range() },
-          { name: '新加坡 03', ...range() }
+          { name: '新加坡 03', server: 'sg.example.com', proxy: true, ...range() },
+          { name: '香港 01', server: 'hk.example.com', proxy: true, ...range() },
+          { name: '日本 02', server: 'jp.example.com', proxy: true, ...range() },
+          { name: 'DIRECT', proxy: false, ...range() }
         ]
       };
     }
@@ -2777,6 +2817,7 @@
     startMonitor();
     setInterval(() => loadDashboard(true), 10000);
     setInterval(() => loadTrafficStats(), 30000);
-    setInterval(() => loadNetworkStatus(false), 15000);
+    // 出口 IP 探测必须走代理，属纯开销，无需高频刷新
+    setInterval(() => loadNetworkStatus(false), 300000);
   });
 })();

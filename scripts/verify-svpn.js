@@ -106,6 +106,18 @@ async function main() {
   if (fs.existsSync(mmdb)) {
     fs.copyFileSync(mmdb, path.join(dataDir, 'clash-configs', 'Country.mmdb'));
   }
+  const today = new Date().toISOString().slice(0, 10);
+  fs.writeFileSync(
+    path.join(dataDir, 'traffic-stats.json'),
+    JSON.stringify({
+      byDate: {
+        [today]: {
+          demo: { up: 1024, down: 2048, proxy: true, server: '127.0.0.1' },
+          DIRECT: { up: 128, down: 256, proxy: false }
+        }
+      }
+    }, null, 2)
+  );
 
   try {
     run(['config', 'ports', String(PORTS.http), '--data-dir', dataDir]);
@@ -152,6 +164,19 @@ async function main() {
 
     const statusJson = JSON.parse(run(['status', '--json', '--no-delay', '--data-dir', dataDir]));
     check('status --json 报告 running=true', statusJson.running === true, JSON.stringify(statusJson));
+
+    const trafficOutput = run(['traffic', '--data-dir', dataDir]);
+    check('traffic 文本输出展示代理与直连流量', /代理流量：3\.00 KB/.test(trafficOutput) && /直连流量：384 B/.test(trafficOutput), trafficOutput);
+    const trafficJson = JSON.parse(run(['traffic', '30', '--json', '--data-dir', dataDir]));
+    check(
+      'traffic JSON 输出节点、服务地址与分项',
+      trafficJson.proxy.up === 1024 &&
+        trafficJson.proxy.down === 2048 &&
+        trafficJson.direct.up === 128 &&
+        trafficJson.direct.down === 256 &&
+        trafficJson.nodes.some(item => item.name === 'demo' && item.server === '127.0.0.1' && item.proxy === true),
+      JSON.stringify(trafficJson)
+    );
 
     run(['stop', '--data-dir', dataDir]);
     const afterStop = await httpGet(PORTS.service, '/health');

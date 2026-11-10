@@ -138,6 +138,17 @@ svpn nodes
 svpn nodes --delay
 ```
 
+查看桌面版记录的节点流量：
+
+```bash
+svpn traffic             # 今天（默认）
+svpn traffic 3           # 近 3 天
+svpn traffic 7           # 近 7 天
+svpn traffic 30 --json   # 近 30 天，JSON 输出
+```
+
+输出包含总流量、代理/直连分项，以及每个代理节点的服务地址、上传、下载和总用量。流量台账由桌面版 SilverVPN 运行时采集；尚未运行桌面版或暂无流量时会显示空记录。
+
 切换节点：
 
 ```bash
