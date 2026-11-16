@@ -19,7 +19,7 @@ The project focuses on practical Linux usage: subscription import, profile manag
 - **Custom port group**: the GUI network panel and the CLI (`svpn config ports`) share one port configuration, so a change on either side applies to both.
 - **Modern themed UI**: 7 color themes, custom background image, glass opacity, theme-colored hover glow, and a live particle-physics backdrop — place and drag emitters and gravity sources, pick ring-orbit or black-hole capture, and configure spin direction (CW/CCW/random).
 - **Live monitor & traffic stats**: real-time traffic/delay/connection charts, per-node traffic by proxy/direct route for today/3/7/30 days, server-address visibility, and matching `svpn traffic` CLI reports.
-- **Safe proxy lifecycle**: system/shell proxy updates are transactional and roll back on failure; log retention is capped (10 MB × 3 files) with stale-log cleanup.
+- **Safe proxy lifecycle**: system/shell proxy updates are transactional and roll back on failure; core logs rotate automatically — 10 MB × 3 files for the GUI and 8 MB × 2 files for the CLI daemon — with stale-log cleanup.
 - **Developer-tool friendly**: works with terminal tools and remote IDE workflows through explicit proxy variables and VS Code Remote configuration; automatically disables mihomo IPv6 when the host lacks usable IPv6 routing.
 
 ## Documentation

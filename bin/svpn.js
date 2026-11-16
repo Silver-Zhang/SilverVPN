@@ -460,9 +460,72 @@ function prepareRuntimeConfig(paths, ports) {
   }
 }
 
-function appendLog(paths, stream, line) {
-  ensureDir(paths.logsDir);
-  fs.appendFileSync(assertPathInHome(path.join(paths.logsDir, stream), 'SilverVPN log'), line);
+const CLI_LOG_MAX_BYTES = 8 * 1024 * 1024;
+const CLI_LOG_KEEP_FILES = 1;
+
+function rotateLogFile(file, keep = CLI_LOG_KEEP_FILES) {
+  try {
+    const stat = fs.statSync(file);
+    if (!stat.isFile() || stat.size < CLI_LOG_MAX_BYTES) return false;
+  } catch (_error) {
+    return false;
+  }
+  try {
+    for (let index = keep; index >= 1; index -= 1) {
+      const target = `${file}.${index}`;
+      const source = index === 1 ? file : `${file}.${index - 1}`;
+      fs.rmSync(target, { force: true });
+      if (fs.existsSync(source)) fs.renameSync(source, target);
+    }
+  } catch (_error) {
+    // 轮转失败时继续写入，避免影响代理运行
+  }
+  return true;
+}
+
+function createRotatingLogWriter(file) {
+  ensureDir(path.dirname(file));
+  let fd = null;
+  let size = 0;
+  const open = () => {
+    try {
+      size = fs.statSync(file).size;
+    } catch (_error) {
+      size = 0;
+    }
+    fd = fs.openSync(file, 'a');
+  };
+  open();
+  return {
+    file,
+    write(chunk) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+      if (!buffer.length) return;
+      try {
+        if (!fd || size >= CLI_LOG_MAX_BYTES) {
+          if (fd) {
+            try {
+              fs.closeSync(fd);
+            } catch (_error) {}
+            fd = null;
+          }
+          rotateLogFile(file);
+          open();
+        }
+        fs.writeSync(fd, buffer);
+        size += buffer.length;
+      } catch (_error) {
+        // 日志写入失败不应中断代理
+      }
+    },
+    close() {
+      if (!fd) return;
+      try {
+        fs.closeSync(fd);
+      } catch (_error) {}
+      fd = null;
+    }
+  };
 }
 
 const TRAFFIC_RETENTION_DAYS = 31;
@@ -602,7 +665,24 @@ function createTrafficSampler(paths, ports) {
   };
 }
 
-async function daemon(paths, args) {
+async function daemon(paths, args, fatalLog) {
+  const outLog = createRotatingLogWriter(assertPathInHome(path.join(paths.logsDir, 'svpn-core.log'), 'SilverVPN log'));
+  const errLog = fatalLog || createRotatingLogWriter(assertPathInHome(path.join(paths.logsDir, 'svpn-core.err.log'), 'SilverVPN log'));
+  const writeOut = chunk => {
+    outLog.write(chunk);
+    if (process.stdout.isTTY) process.stdout.write(chunk);
+  };
+  const writeErr = chunk => {
+    errLog.write(chunk);
+    if (process.stderr.isTTY) process.stderr.write(chunk);
+  };
+  process.on('uncaughtException', error => {
+    writeErr(`[${new Date().toISOString()}] ${error && error.stack ? error.stack : error}\n`);
+    outLog.close();
+    errLog.close();
+    process.exit(1);
+  });
+
   const ports = getPorts(paths, args);
   const core = findCore(paths);
   if (!core) throw new Error('mihomo core not found. Run scripts/install-core.sh first.');
@@ -610,12 +690,14 @@ async function daemon(paths, args) {
   let child = null;
   const reusing = await coreProbe(ports);
   if (reusing) {
-    appendLog(paths, 'svpn-core.log', `[${new Date().toISOString()}] reusing existing core on port ${ports.core}\n`);
+    writeOut(`[${new Date().toISOString()}] reusing existing core on port ${ports.core}\n`);
   } else {
     prepareRuntimeConfig(paths, ports);
     child = spawn(core, ['-d', paths.runtimeDir], {
-      stdio: ['ignore', 'inherit', 'inherit']
+      stdio: ['ignore', 'pipe', 'pipe']
     });
+    if (child.stdout) child.stdout.on('data', writeOut);
+    if (child.stderr) child.stderr.on('data', writeErr);
   }
   let shuttingDown = false;
   const trafficSampler = createTrafficSampler(paths, ports);
@@ -753,11 +835,11 @@ async function start(paths, args) {
 
   prepareRuntimeConfig(paths, ports);
   ensureDir(paths.logsDir);
-  const stdout = fs.openSync(assertPathInHome(path.join(paths.logsDir, 'svpn-core.log'), 'SilverVPN log'), 'a');
-  const stderr = fs.openSync(assertPathInHome(path.join(paths.logsDir, 'svpn-core.err.log'), 'SilverVPN log'), 'a');
+  // daemon 自行以轮转方式写入 svpn-core.log / svpn-core.err.log（8MB × 2），
+  // 因此这里不再把文件描述符直接交给子进程，避免日志无限增长。
   const child = spawn(process.execPath, [path.resolve(__filename), 'daemon', '--data-dir', paths.dataDir], {
     detached: true,
-    stdio: ['ignore', stdout, stderr]
+    stdio: 'ignore'
   });
   child.unref();
   writeJson(paths.pidFile, {
@@ -1677,7 +1759,14 @@ async function main() {
   ensureDir(paths.logsDir);
 
   if (command === 'help' || args.help) return printHelp();
-  if (command === 'daemon') return daemon(paths, args);
+  if (command === 'daemon') {
+    const fatalLog = createRotatingLogWriter(assertPathInHome(path.join(paths.logsDir, 'svpn-core.err.log'), 'SilverVPN log'));
+    return daemon(paths, args, fatalLog).catch(error => {
+      fatalLog.write(`[${new Date().toISOString()}] ${error && error.stack ? error.stack : error}\n`);
+      fatalLog.close();
+      process.exit(1);
+    });
+  }
   if (command === 'on') return on(paths, args);
   if (command === 'off') return off(paths, args);
   if (command === 'start') return start(paths, args);
