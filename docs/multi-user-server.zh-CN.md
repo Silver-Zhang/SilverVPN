@@ -140,3 +140,39 @@ VS Code 设置为：
 - 不要只根据“当前端口是否监听”来动态复用端口；
 - 不要在公共文件中保存订阅链接；
 - 不使用时建议执行 `svpn off`。
+
+## 9. 批量升级（管理员）
+
+用户较多时，可以用仓库自带的脚本一次性升级服务器上所有已安装用户：
+
+```bash
+sudo bash scripts/upgrade-all-users.sh
+```
+
+脚本会遍历系统用户，自动定位 `~/app/SilverVPN` 或 `~/SilverVPN` 仓库，并以对应用户身份依次执行：
+
+1. `git pull --ff-only`（先修复 `install-svpn.sh` 造成的 `bin/svpn` 权限差异）；
+2. `scripts/install-svpn.sh` 刷新 `~/.local/bin/svpn` 与 shell hook；
+3. 若升级前代理在运行：`svpn stop` → 截断超过 32 MB 的历史日志 → `svpn start`。
+
+常用参数：
+
+```bash
+sudo bash scripts/upgrade-all-users.sh --dry-run        # 只检查版本、二进制与日志，不做修改
+sudo bash scripts/upgrade-all-users.sh --user alice     # 只升级一个用户
+sudo bash scripts/upgrade-all-users.sh --no-truncate    # 不清理历史超大日志
+```
+
+首次部署时服务器上还没有这个脚本，可以直接从仓库获取：
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Silver-Zhang/SilverVPN/main/scripts/upgrade-all-users.sh
+sudo bash upgrade-all-users.sh --dry-run
+sudo bash upgrade-all-users.sh
+```
+
+行为约定：
+
+- 不会启动本已停止的代理，也不会改动用户的端口、订阅与节点选择；
+- 某个用户 `git pull` 失败（本地改动、分支分叉）时会整体跳过该用户并保留现场，其余用户继续；
+- 只截断 CLI 的 `svpn-core.log` / `svpn-core.err.log`，且仅在超过 32 MB 时执行；v0.3.4 起这两种日志已按 8 MB × 2 轮转，无需日常清理。

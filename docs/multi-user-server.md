@@ -136,3 +136,39 @@ For shared servers:
 - avoid dynamic port reuse based only on currently listening ports;
 - do not share subscription URLs in public files;
 - ask users to run `svpn off` when they no longer need the proxy.
+
+## 9. Bulk upgrade (administrators)
+
+On servers with many users, the bundled script upgrades every installed SilverVPN user in one pass:
+
+```bash
+sudo bash scripts/upgrade-all-users.sh
+```
+
+It walks system accounts, locates each `~/app/SilverVPN` or `~/SilverVPN` checkout, and runs as that user:
+
+1. `git pull --ff-only` (after restoring the `bin/svpn` mode drift left by `install-svpn.sh`);
+2. `scripts/install-svpn.sh` to refresh `~/.local/bin/svpn` and the shell hook;
+3. if the proxy was running before the upgrade: `svpn stop` → truncate logs over 32 MB → `svpn start`.
+
+Options:
+
+```bash
+sudo bash scripts/upgrade-all-users.sh --dry-run        # inspect only, no changes
+sudo bash scripts/upgrade-all-users.sh --user alice     # upgrade a single user
+sudo bash scripts/upgrade-all-users.sh --no-truncate    # keep oversized historical logs
+```
+
+For the first rollout the script is not on the server yet, so fetch it first:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Silver-Zhang/SilverVPN/main/scripts/upgrade-all-users.sh
+sudo bash upgrade-all-users.sh --dry-run
+sudo bash upgrade-all-users.sh
+```
+
+Guarantees:
+
+- proxies that were stopped stay stopped; ports, subscriptions and node selection are untouched;
+- a user whose `git pull` fails (local edits, diverged branch) is skipped intact and the run continues;
+- only the CLI `svpn-core.log` / `svpn-core.err.log` are truncated, and only when larger than 32 MB; since v0.3.4 both rotate at 8 MB × 2, so routine cleanup is unnecessary.
